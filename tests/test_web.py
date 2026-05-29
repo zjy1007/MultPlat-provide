@@ -75,3 +75,26 @@ def test_style_success_with_injected_adapter(monkeypatch):
 def test_style_unknown_platform():
     r = client.post("/api/style", json={"markdown": "x", "platform": "telegram"})
     assert r.json()["available"] is False
+
+
+# 1x1 透明 PNG
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+    "890000000a49444154789c6360000002000154a24f6e0000000049454e44ae426082"
+)
+
+
+def test_upload_returns_absolute_url_and_serves_file():
+    r = client.post("/api/upload", files={"file": ("a.png", _PNG, "image/png")})
+    assert r.status_code == 200
+    url = r.json()["url"]
+    # 必须是绝对 http URL（否则会被 make_image_ref 判为本地图而出占位）
+    assert url.startswith("http") and "/static/uploads/" in url and url.endswith(".png")
+    # 上传后能被静态服务取到
+    path = url.split("/static/", 1)[1]
+    assert client.get("/static/" + path).status_code == 200
+
+
+def test_upload_rejects_non_image_ext():
+    r = client.post("/api/upload", files={"file": ("evil.exe", b"MZ", "application/octet-stream")})
+    assert "error" in r.json()
