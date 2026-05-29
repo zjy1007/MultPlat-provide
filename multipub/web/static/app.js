@@ -149,7 +149,7 @@ function renderActivePreview() {
 
   let bodyHtml;
   if (r.body_format === "html") {
-    bodyHtml = `<div class="card"><iframe class="html-preview" id="frame-${name}" sandbox></iframe></div>`;
+    bodyHtml = `<div class="card"><iframe class="html-preview" id="frame-${name}" sandbox="allow-same-origin"></iframe></div>`;
   } else {
     bodyHtml = `<div class="card"><pre class="text-preview">${escapeHtml(r.body)}</pre></div>`;
   }
