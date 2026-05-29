@@ -275,4 +275,35 @@ function escapeHtml(s) {
 
 editor.addEventListener("input", debounce(refresh, 400));
 $("publishBtn").addEventListener("click", publish);
+
+// 粘贴剪贴板图片：上传 → 在光标处插入 markdown 图片语法 → 预览自动显示
+editor.addEventListener("paste", async (e) => {
+  const items = e.clipboardData ? e.clipboardData.files : null;
+  const img = items && [...items].find((f) => f.type.startsWith("image/"));
+  if (!img) return; // 非图片，走默认文本粘贴
+  e.preventDefault();
+  $("status").textContent = "📎 上传图片中…";
+  try {
+    const fd = new FormData();
+    fd.append("file", img, img.name || "pasted.png");
+    const res = await fetch("/api/upload", { method: "POST", body: fd }).then((r) => r.json());
+    if (res.error) { $("status").textContent = "上传失败：" + res.error; return; }
+    insertAtCursor(`![pasted image](${res.url})`);
+    $("status").textContent = res.public
+      ? "✅ 图片已上传公网图床（可随成品复制到平台）"
+      : "✅ 图片已插入（仅本机预览；复制到平台需配置公网图床）";
+    refresh();
+  } catch (err) {
+    $("status").textContent = "上传失败：" + err.message;
+  }
+});
+
+function insertAtCursor(text) {
+  const s = editor.selectionStart, eend = editor.selectionEnd;
+  editor.value = editor.value.slice(0, s) + text + editor.value.slice(eend);
+  const pos = s + text.length;
+  editor.selectionStart = editor.selectionEnd = pos;
+  editor.focus();
+}
+
 init();
