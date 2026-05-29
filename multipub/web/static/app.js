@@ -28,8 +28,8 @@ const state = {
   active: null,       // 当前激活的 tab name
   results: {},        // name -> rendered（确定性适配）
   receipts: {},       // name -> published
-  styledOverride: {}, // name -> rendered（LLM 风格化后的版本，应用中）
-  styleInfo: {},      // name -> {styled_md, original_md, changed, note, unavailable}
+  // name -> { styled_md, original_md, rendered, changed, note, status:'pending'|'applied' } 或 { unavailable, note }
+  styleInfo: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -48,7 +48,49 @@ async function init() {
   state.active = state.platforms[0]?.name ?? null;
   renderPlatformToggles();
   renderTabs();
+  await initLLM();
   await refresh();
+}
+
+// ---- LLM 设置（厂商 / key / 模型），key 仅存浏览器 sessionStorage，不落服务器 ----
+const LLM = { providers: [] };
+
+async function initLLM() {
+  const sel = $("llm-provider");
+  try {
+    const res = await fetch("/api/providers").then((r) => r.json());
+    LLM.providers = res.providers || [];
+    sel.innerHTML = LLM.providers.map((p) => `<option value="${p.name}">${p.label}</option>`).join("");
+  } catch (_) {}
+  const saved = JSON.parse(sessionStorage.getItem("llm") || "{}");
+  if (saved.provider) sel.value = saved.provider;
+  $("llm-key").value = saved.key || "";
+  $("llm-model").value = saved.model || "";
+  syncLLMHint();
+  sel.addEventListener("change", () => { $("llm-model").value = ""; syncLLMHint(); saveLLM(); });
+  $("llm-key").addEventListener("input", saveLLM);
+  $("llm-model").addEventListener("input", saveLLM);
+}
+
+function currentProvider() {
+  return LLM.providers.find((p) => p.name === $("llm-provider").value);
+}
+function syncLLMHint() {
+  const p = currentProvider();
+  $("llm-model").placeholder = p ? `模型（默认 ${p.default_model}）` : "模型（留空用默认）";
+  $("llm-hint").textContent = p && p.note ? "💡 " + p.note : "";
+}
+function saveLLM() {
+  sessionStorage.setItem("llm", JSON.stringify({
+    provider: $("llm-provider").value, key: $("llm-key").value, model: $("llm-model").value,
+  }));
+}
+function llmSettings() {
+  return {
+    provider: $("llm-provider").value,
+    api_key: $("llm-key").value.trim(),
+    model: $("llm-model").value.trim() || null,
+  };
 }
 
 function renderPlatformToggles() {
@@ -99,9 +141,8 @@ async function refresh() {
       body: JSON.stringify({ markdown: editor.value, platforms }),
     }).then((r) => r.json());
     state.results = res.results;
-    state.receipts = {};       // 内容变了，旧回执作废
-    state.styledOverride = {}; // 源文变了，旧的风格化版本作废
-    state.styleInfo = {};
+    state.receipts = {};   // 内容变了，旧回执作废
+    state.styleInfo = {};  // 源文变了，旧的风格化结果（待采用/已采用）一并作废
     $("status").textContent = "已更新";
     renderTabs();
     renderActivePreview();
@@ -116,8 +157,10 @@ function platformMeta(name) {
 
 function renderActivePreview() {
   const name = state.active;
-  const styled = !!state.styledOverride[name];
-  const r = state.styledOverride[name] || state.results[name];
+  const info = state.styleInfo[name];
+  // 待采用(pending) 或 已采用(applied) 时，预览展示风格化结果；否则展示原始适配
+  const styledActive = !!(info && info.rendered && (info.status === "pending" || info.status === "applied"));
+  const r = styledActive ? info.rendered : state.results[name];
   const wrap = $("preview");
   if (!r) { wrap.innerHTML = ""; return; }
   const meta = platformMeta(name);
@@ -138,13 +181,41 @@ function renderActivePreview() {
     ? `<div class="warnings">⚠️ 适配提示：<ul>${r.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>`
     : "";
 
-  const info = state.styleInfo[name];
   let styleHtml = "";
   if (info && info.unavailable) {
     styleHtml = `<div class="warnings">✨ ${escapeHtml(info.note || "风格适配不可用")}</div>`;
-  } else if (styled && info) {
-    styleHtml = `<div class="style-panel">✨ <b>已应用 LLM 风格化</b>（${info.changed ? "已按平台调性改写" : "与原文一致"}）—— 下方预览为风格化后的成品
-      <details><summary>查看风格化后的 Markdown</summary><pre class="text-preview" style="background:#f7f8fa;border-radius:6px;">${escapeHtml(info.styled_md || "")}</pre></details></div>`;
+  } else if (info && info.status === "pending") {
+    styleHtml = `<div class="style-panel">✨ <b>LLM 风格化结果（待你决定）</b> —— ${info.changed ? "已按平台调性改写，下方为预览" : "改写结果与原文基本一致"}。请审阅后点 <b>采用</b> 或 <b>舍弃</b>。
+      <details open><summary>查看改写后的 Markdown</summary><pre class="text-preview" style="background:#fff;border:1px solid var(--line);border-radius:var(--r-sm);">${escapeHtml(info.styled_md || "")}</pre></details></div>`;
+  } else if (info && info.status === "applied") {
+    styleHtml = `<div class="style-panel">✨ <b>已采用 LLM 风格化版本</b>（下方预览为风格化成品）
+      <details><summary>查看改写后的 Markdown</summary><pre class="text-preview" style="background:#fff;border:1px solid var(--line);border-radius:var(--r-sm);">${escapeHtml(info.styled_md || "")}</pre></details></div>`;
+  }
+
+  // 图片清单：列出每张图（与正文【图N】对应），可复制链接；标注是否需手动上传
+  const embeds = meta?.constraints?.embeds_remote_images !== false;
+  let manifestHtml = "";
+  if (r.images && r.images.length) {
+    const rows = r.images.map((img, i) => {
+      const manual = img.note || !embeds;
+      const tag = manual
+        ? '<span class="img-tag manual">需手动上传</span>'
+        : '<span class="img-tag auto">随成品带入</span>';
+      const thumb = img.is_local
+        ? '<span class="img-thumb none">本地</span>'
+        : `<img class="img-thumb" src="${escapeAttr(img.url)}" alt="" />`;
+      return `<li>
+        <span class="img-no">图${i + 1}</span>
+        ${thumb}
+        <span class="img-alt">${escapeHtml(img.alt || "（无 alt）")}</span>
+        ${tag}
+        <button class="link-copy" data-url="${escapeAttr(img.url)}">复制链接</button>
+      </li>`;
+    }).join("");
+    manifestHtml = `<div class="manifest">
+      <div class="manifest-head">🖼 图片清单（${r.images.length} 张）
+        <button class="ghost mini" id="copyAllImgs">复制全部链接</button></div>
+      <ul>${rows}</ul></div>`;
   }
 
   let bodyHtml;
@@ -154,9 +225,16 @@ function renderActivePreview() {
     bodyHtml = `<div class="card"><pre class="text-preview">${escapeHtml(r.body)}</pre></div>`;
   }
 
-  const styleBtn = styled
-    ? `<button class="ghost" id="revertBtn">↩︎ 还原原始适配</button>`
-    : `<button class="ghost" id="styleBtn">✨ 用 LLM 适配风格</button>`;
+  let styleBtns;
+  if (info && info.status === "pending") {
+    styleBtns = `<button id="adoptBtn">✅ 采用</button><button class="ghost" id="discardBtn">✕ 舍弃</button>`;
+  } else if (info && info.status === "applied") {
+    styleBtns = `<button class="ghost" id="revertBtn">↩︎ 还原原始适配</button>`;
+  } else {
+    styleBtns = `<button class="ghost" id="styleBtn">✨ 用 LLM 适配风格</button>`;
+  }
+  const styledTag = info && info.status === "pending" ? '<span style="color:var(--style)">✨ 待采用</span>'
+    : info && info.status === "applied" ? '<span style="color:var(--style)">✨ 已采用风格</span>' : "";
 
   wrap.innerHTML = `
     ${receiptHtml}
@@ -164,15 +242,16 @@ function renderActivePreview() {
       <span>格式：${r.body_format}</span>
       ${countLabel}
       <span>图片 ${r.images.length} 张${r.images.filter((i) => i.note).length ? `（${r.images.filter((i) => i.note).length} 张需手动处理）` : ""}</span>
-      ${styled ? '<span style="color:#fb7299">✨ LLM 风格化中</span>' : ""}
+      ${styledTag}
     </div>
     ${styleHtml}
     ${warningsHtml}
     ${r.title ? `<div style="font-size:13px;color:#666;margin-bottom:8px;">标题：${escapeHtml(r.title)}</div>` : ""}
     ${bodyHtml}
+    ${manifestHtml}
     <div class="toolbar">
       <button class="ghost" id="copyBtn">${r.body_format === "html" ? "复制为富文本（粘进公众号）" : "复制文案"}</button>
-      ${styleBtn}
+      ${styleBtns}
     </div>`;
 
   if (r.body_format === "html") {
@@ -188,18 +267,41 @@ function renderActivePreview() {
   if (sb) sb.addEventListener("click", styleCurrent);
   const rb = $("revertBtn");
   if (rb) rb.addEventListener("click", revertStyle);
+  const ab = $("adoptBtn");
+  if (ab) ab.addEventListener("click", adoptStyle);
+  const db = $("discardBtn");
+  if (db) db.addEventListener("click", discardStyle);
+
+  // 图片清单：单张复制 / 全部复制
+  wrap.querySelectorAll(".link-copy").forEach((b) =>
+    b.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(b.dataset.url);
+      $("status").textContent = "✅ 已复制图片链接";
+    })
+  );
+  const copyAll = $("copyAllImgs");
+  if (copyAll) copyAll.addEventListener("click", async () => {
+    const urls = (r.images || []).map((i) => i.url).join("\n");
+    await navigator.clipboard.writeText(urls);
+    $("status").textContent = `✅ 已复制 ${r.images.length} 个图片链接`;
+  });
 }
 
 async function styleCurrent() {
   const name = state.active;
   if (!name) return;
+  const llm = llmSettings();
+  if (!llm.api_key) {
+    $("status").textContent = "✨ 请先在顶部「LLM 设置」选择厂商并填写 API key";
+    return;
+  }
   $("styleBtn") && ($("styleBtn").disabled = true);
-  $("status").textContent = "✨ LLM 风格适配中…";
+  $("status").textContent = `✨ ${currentProvider()?.label || ""} 风格适配中…`;
   try {
     const r = await fetch("/api/style", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ markdown: editor.value, platform: name }),
+      body: JSON.stringify({ markdown: editor.value, platform: name, ...llm }),
     }).then((res) => res.json());
 
     if (!r.available) {
@@ -208,9 +310,12 @@ async function styleCurrent() {
     } else if (r.error) {
       $("status").textContent = "✨ 失败：" + r.error;
     } else {
-      state.styledOverride[name] = r.rendered;
-      state.styleInfo[name] = { styled_md: r.styled, original_md: r.original, changed: r.changed, note: r.note };
-      $("status").textContent = r.changed ? "✅ 已生成 LLM 风格化版本" : "风格化结果与原文一致";
+      // 进入「待采用」审阅态：预览展示改写结果，但尚未提交，由用户决定采用/舍弃
+      state.styleInfo[name] = {
+        styled_md: r.styled, original_md: r.original, rendered: r.rendered,
+        changed: r.changed, note: r.note, status: "pending",
+      };
+      $("status").textContent = r.changed ? "✨ 已生成改写，请采用或舍弃" : "改写结果与原文基本一致，待你决定";
     }
     renderActivePreview();
   } catch (e) {
@@ -218,10 +323,21 @@ async function styleCurrent() {
   }
 }
 
+function adoptStyle() {
+  const info = state.styleInfo[state.active];
+  if (info) info.status = "applied"; // 采用：保留为该平台的风格化成品（复制/预览都用它）
+  $("status").textContent = "✅ 已采用 LLM 风格化版本";
+  renderActivePreview();
+}
+
+function discardStyle() {
+  delete state.styleInfo[state.active]; // 舍弃：丢掉改写结果，回到原始适配
+  $("status").textContent = "已舍弃，回到原始适配";
+  renderActivePreview();
+}
+
 function revertStyle() {
-  const name = state.active;
-  delete state.styledOverride[name];
-  delete state.styleInfo[name];
+  delete state.styleInfo[state.active]; // 已采用后还原
   renderActivePreview();
 }
 
@@ -272,6 +388,7 @@ async function publish() {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+const escapeAttr = escapeHtml; // 属性值同样需要转义引号
 
 editor.addEventListener("input", debounce(refresh, 400));
 $("publishBtn").addEventListener("click", publish);

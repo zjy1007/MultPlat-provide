@@ -77,7 +77,8 @@ def test_local_and_svg_images_warn_and_collected():
     assert any("本地" in w for w in rc.warnings)
     assert any("SVG" in w for w in rc.warnings)
     assert "<img" not in rc.body
-    assert "图片待处理" in rc.body
+    # 本地图/svg 渲染成【图N】占位（与右侧清单对应）
+    assert "【图1】" in rc.body and "【图2】" in rc.body
 
 
 def test_remote_image_output():

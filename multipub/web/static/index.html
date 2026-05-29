@@ -89,6 +89,30 @@
 
   /* ---- toolbar ---- */
   .toolbar { display: flex; gap: 8px; padding: 12px 0 4px; }
+
+  /* ---- image manifest ---- */
+  .manifest { margin-top: 12px; background: #fff; border: 1px solid var(--line); border-radius: var(--r); padding: 10px 14px; }
+  .manifest-head { font-size: 13px; font-weight: 600; color: var(--ink-2); display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .manifest ul { list-style: none; margin: 0; padding: 0; }
+  .manifest li { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line-2); font-size: 12px; }
+  .img-no { color: var(--brand); font-weight: 600; white-space: nowrap; }
+  .img-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: var(--r-sm); background: var(--bg-soft); flex: none; }
+  .img-thumb.none { display: inline-flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 11px; }
+  .img-alt { flex: 1; min-width: 0; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .img-tag { font-size: 11px; padding: 2px 9px; border-radius: var(--r-pill); white-space: nowrap; border: 1px solid; }
+  .img-tag.manual { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
+  .img-tag.auto { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-border); }
+  .link-copy { font-size: 11px; padding: 4px 9px; background: #fff; color: var(--ink-2); border: 1px solid var(--line); border-radius: var(--r-sm); font-weight: 500; }
+  .link-copy:hover { color: var(--brand); border-color: var(--brand); background: #fff; }
+  button.mini { font-size: 11px; padding: 3px 9px; }
+
+  /* ---- LLM 设置栏 ---- */
+  #llm-bar { display: flex; align-items: center; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--line); background: var(--style-bg); flex-wrap: wrap; }
+  #llm-bar .llm-label { font-size: 12px; font-weight: 600; color: var(--style); white-space: nowrap; }
+  #llm-bar select, #llm-bar input { font-size: 12px; padding: 6px 9px; border: 1px solid var(--style-border); border-radius: var(--r-sm); background: #fff; color: var(--ink); }
+  #llm-bar #llm-key { flex: 1; min-width: 200px; }
+  #llm-bar #llm-model { width: 170px; }
+  #llm-bar .llm-hint { font-size: 11px; color: var(--ink-3); }
 </style>
 </head>
 <body>
@@ -100,6 +124,14 @@
   <span id="status"></span>
   <button id="publishBtn">一键模拟发布</button>
 </header>
+
+<div id="llm-bar">
+  <span class="llm-label">✨ LLM 风格适配</span>
+  <select id="llm-provider"></select>
+  <input id="llm-key" type="password" placeholder="在此粘贴 API key（仅存于本浏览器，不上传服务器存储）" autocomplete="off" />
+  <input id="llm-model" type="text" placeholder="模型（留空用默认）" />
+  <span id="llm-hint" class="llm-hint"></span>
+</div>
 
 <main>
   <section class="pane left">

@@ -8,8 +8,10 @@
 该产物可被用户继续编辑，再走确定性 render。因此 LLM **永不进实时预览/防抖链路**，
 下游全程保持可快照、可复现。
 
-无 ANTHROPIC_API_KEY 或未安装 anthropic SDK 时优雅降级（available()=False + 清晰错误），
+无 DEEPSEEK_API_KEY 或未安装 httpx 时优雅降级（available()=False + 清晰错误），
 绝不让主流程崩溃。
+
+LLM 后端用 DeepSeek（deepseek-chat，OpenAI 兼容 API，httpx 直调）。
 """
 
 from __future__ import annotations
@@ -23,8 +25,36 @@ import yaml
 
 _PROFILE_DIR = Path(__file__).resolve().parent.parent / "profiles"
 
-# 默认模型：风格改写用 Sonnet 性价比合适；可通过参数覆盖为更强的 Opus。
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# 风格改写求"贴原意、稳定" → 低温度（用户选定 0.4）。
+TEMPERATURE = 0.4
+
+
+@dataclass
+class ProviderSpec:
+    label: str
+    base_url: str       # OpenAI 兼容的 chat/completions 端点
+    default_model: str
+    note: str = ""      # 给前端的提示（如豆包需填接入点 id）
+
+
+# 三家都是 OpenAI 兼容 API：同一套 chat/completions 协议，只是 base_url / 默认模型不同。
+PROVIDERS: dict[str, ProviderSpec] = {
+    "deepseek": ProviderSpec(
+        "DeepSeek", "https://api.deepseek.com/chat/completions", "deepseek-chat"
+    ),
+    "qwen": ProviderSpec(
+        "千问 Qwen",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "qwen-plus",
+    ),
+    "doubao": ProviderSpec(
+        "豆包 Doubao",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        "doubao-pro-32k",
+        note="豆包的「模型」通常填你在火山方舟创建的接入点 id（ep-xxxx）",
+    ),
+}
+DEFAULT_PROVIDER = "deepseek"
 
 
 class StyleError(RuntimeError):
@@ -103,14 +133,21 @@ class NoopStyleAdapter(StyleAdapter):
 
 
 class LLMStyleAdapter(StyleAdapter):
-    """调用 Claude 按平台画像改写文案。
+    """按平台画像改写文案，调用 OpenAI 兼容 API（DeepSeek / 千问 / 豆包）。
 
     `complete` 可注入（签名 (system:str, user:str)->str），用于测试时绕过真实 API。
     """
 
-    def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None, complete=None):
+    def __init__(
+        self,
+        base_url: str = "https://api.deepseek.com/chat/completions",
+        api_key: str | None = None,
+        model: str = "deepseek-chat",
+        complete=None,
+    ):
+        self._base_url = base_url
+        self._api_key = api_key
         self._model = model
-        self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self._complete = complete
 
     def available(self) -> bool:
@@ -121,7 +158,7 @@ class LLMStyleAdapter(StyleAdapter):
             return markdown
         system = self._system_prompt(profile)
         user = self._user_prompt(markdown)
-        complete = self._complete or self._call_anthropic
+        complete = self._complete or self._call_llm
         return _strip_fence(complete(system, user)).strip()
 
     # ---- 提示词 ----
@@ -155,25 +192,34 @@ class LLMStyleAdapter(StyleAdapter):
     def _user_prompt(markdown: str) -> str:
         return f"请改写下面这篇 Markdown：\n\n{markdown}"
 
-    def _call_anthropic(self, system: str, user: str) -> str:
+    def _call_llm(self, system: str, user: str) -> str:
+        """通用 OpenAI 兼容调用（DeepSeek/千问/豆包 同协议，只是 base_url/model 不同）。"""
         if not self._api_key:
-            raise StyleError("未设置 ANTHROPIC_API_KEY，无法使用 LLM 风格适配（可关闭该功能或配置 key）")
+            raise StyleError("未配置 LLM API key —— 请在页面顶部「LLM 设置」里选模型并填写 key")
         try:
-            import anthropic
+            import httpx
         except ImportError as e:  # pragma: no cover - 依赖缺失路径
-            raise StyleError("未安装 anthropic SDK，请 pip install 'multipub[llm]'") from e
+            raise StyleError("未安装 httpx，请 pip install 'multipub[llm]'") from e
         try:
-            client = anthropic.Anthropic(api_key=self._api_key)
-            resp = client.messages.create(
-                model=self._model,
-                max_tokens=2048,
-                # 系统提示按平台稳定，开启 prompt caching 降本提速
-                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-                messages=[{"role": "user", "content": user}],
+            resp = httpx.post(
+                self._base_url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={
+                    "model": self._model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "temperature": TEMPERATURE,
+                    "stream": False,
+                },
+                timeout=60,
             )
+            resp.raise_for_status()
+            data = resp.json()
         except Exception as e:  # 网络/鉴权/限流等
             raise StyleError(f"LLM 调用失败：{e}") from e
-        return "".join(getattr(b, "text", "") for b in resp.content)
+        return data["choices"][0]["message"]["content"]
 
 
 def _strip_fence(text: str) -> str:
@@ -187,6 +233,25 @@ def _strip_fence(text: str) -> str:
             lines = lines[:-1]
         return "\n".join(lines)
     return text
+
+
+def make_style_adapter(
+    provider: str | None,
+    api_key: str | None,
+    model: str | None = None,
+    complete=None,
+) -> LLMStyleAdapter:
+    """按 provider 名构造适配器；key/model 来自页面输入（不落盘）。
+
+    complete 可注入用于测试，绕过真实网络调用。
+    """
+    spec = PROVIDERS.get(provider or DEFAULT_PROVIDER, PROVIDERS[DEFAULT_PROVIDER])
+    return LLMStyleAdapter(
+        base_url=spec.base_url,
+        api_key=api_key,
+        model=model or spec.default_model,
+        complete=complete,
+    )
 
 
 def style_for_platform(

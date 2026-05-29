@@ -79,6 +79,7 @@ class WeChatPlatform(Platform):
         supports_markdown=False,
         allows_external_links=False,
         emoji_style="moderate",
+        embeds_remote_images=True,  # 公众号有「外链图片转存」，远程直链图能带过去
     )
 
     def render(self, doc: D.Document, opts: dict | None = None) -> RenderedContent:
@@ -119,17 +120,18 @@ class WeChatPlatform(Platform):
         def render_image(n: D.Image) -> str:
             ref = make_image_ref(n.url, n.alt)
             images.append(ref)
+            num = len(images)  # 与右侧图片清单一一对应的编号（正文顺序）
+            # 远程直链且本平台支持转存 → 直接嵌入；否则（本地/svg）→ 可见的【图N】占位
+            if self.constraints.embeds_remote_images and not ref.note:
+                return (
+                    f'<img src="{_esc(ref.url)}" alt="{_esc(ref.alt)}" '
+                    f'style="{_STYLE["img"]}" />'
+                )
             if ref.note:
                 warn(ref.note)
-                label = _esc(ref.alt or n.url or "图片")
-                return (
-                    f'<p style="{_STYLE["img_placeholder"]}">'
-                    f"[图片待处理] {label} —— {_esc(ref.note)}</p>"
-                )
-            return (
-                f'<img src="{_esc(ref.url)}" alt="{_esc(ref.alt)}" '
-                f'style="{_STYLE["img"]}" />'
-            )
+            label = _esc(ref.alt or "图片")
+            extra = f" —— {_esc(ref.note)}" if ref.note else ""
+            return f'<p style="{_STYLE["img_placeholder"]}">【图{num}】{label}{extra}</p>'
 
         # ----------------------------- 块级 -----------------------------
         def render_blocks(blocks: list[D.Block]) -> str:

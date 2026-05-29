@@ -26,6 +26,10 @@ class PlatformConstraints:
     max_images: int | None = None
     allows_external_links: bool = True
     emoji_style: str = "none"  # none | moderate | rich
+    # 平台是否会自动嵌入/转存远程图（粘贴成品时图能直接显示）。
+    # 公众号（外链转存）/知乎（markdown 导入）=True；B站/小红书=False，需手动上传，
+    # 这类平台的图在正文里渲染成可见的「【图N】」占位，并配合图片清单引导手动上传。
+    embeds_remote_images: bool = True
 
 
 @dataclass

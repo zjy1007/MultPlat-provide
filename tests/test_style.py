@@ -3,7 +3,7 @@
 import pytest
 
 from multipub.core.style import (
-    DEFAULT_MODEL,
+    PROVIDERS,
     LLMStyleAdapter,
     NoopStyleAdapter,
     PlatformProfile,
@@ -11,6 +11,7 @@ from multipub.core.style import (
     _strip_fence,
     get_profile,
     load_profiles,
+    make_style_adapter,
     style_for_platform,
 )
 
@@ -74,7 +75,7 @@ def test_empty_markdown_skips_llm():
 def test_no_key_raises_clear_error():
     with pytest.raises(StyleError) as e:
         LLMStyleAdapter(api_key=None).adapt("内容", get_profile("zhihu"))
-    assert "ANTHROPIC_API_KEY" in str(e.value)
+    assert "API key" in str(e.value)
 
 
 def test_style_for_platform_noop_unchanged():
@@ -94,5 +95,20 @@ def test_style_for_platform_unknown_platform():
     assert not r.changed and "无风格画像" in r.note
 
 
-def test_default_model_is_a_claude_model():
-    assert "claude" in DEFAULT_MODEL
+def test_providers_registry():
+    # 三家厂商都在，且都是 OpenAI 兼容端点
+    assert {"deepseek", "qwen", "doubao"} <= set(PROVIDERS)
+    assert PROVIDERS["deepseek"].default_model == "deepseek-chat"
+    for spec in PROVIDERS.values():
+        assert spec.base_url.startswith("https://")
+
+
+def test_make_style_adapter_selects_provider():
+    a = make_style_adapter("qwen", "sk-x")
+    assert "dashscope" in a._base_url and a._model == "qwen-plus" and a.available()
+    # 可覆盖模型（豆包常需填接入点 id）
+    b = make_style_adapter("doubao", "sk-y", model="ep-123")
+    assert "volces" in b._base_url and b._model == "ep-123"
+    # 未知/空 provider 回退默认 deepseek
+    c = make_style_adapter(None, "sk-z")
+    assert "deepseek" in c._base_url

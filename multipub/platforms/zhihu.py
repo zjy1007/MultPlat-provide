@@ -44,6 +44,7 @@ class ZhihuPlatform(Platform):
         supports_markdown=True,
         allows_external_links=True,
         emoji_style="none",
+        embeds_remote_images=True,  # 知乎 markdown 会导入远程图，保留 ![]()
     )
 
     def render(self, doc: D.Document, opts: dict | None = None) -> RenderedContent:
@@ -73,12 +74,16 @@ class ZhihuPlatform(Platform):
                 text = render_children() or (n.url or "")
                 return f"[{text}]({n.url or ''})"
             if isinstance(n, D.Image):
-                # 知乎允许外链，正文照常写 Markdown 图片；同时收进清单并校验可发布性。
+                # 收进清单并校验可发布性；编号与右侧清单一致（正文顺序）。
                 ref = make_image_ref(n.url, n.alt)
                 images.append(ref)
+                num = len(images)
+                # 远程直链 → 照常写 Markdown 图（知乎会导入）；本地/svg → 可见的【图N】占位
+                if self.constraints.embeds_remote_images and not ref.note:
+                    return f"![{n.alt}]({n.url or ''})"
                 if ref.note:
                     warn(ref.note)
-                return f"![{n.alt}]({n.url or ''})"
+                return f"【图{num}】{n.alt or '图片'}"
             if isinstance(n, D.LineBreak):
                 # Markdown 软换行：行尾两个空格 + 换行（保持在同一段落内）
                 return "  \n"

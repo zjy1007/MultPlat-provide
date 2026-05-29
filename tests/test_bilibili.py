@@ -87,13 +87,13 @@ def test_table_rendered():
 
 
 def test_local_image_warns_and_collected():
-    """⑥ 本地图触发 warning 且进 images，输出占位而非 <img>。"""
+    """⑥ 本地图触发 warning 且进 images，输出【图N】占位而非 <img>。"""
     md = "![本地](./a.png)\n"
     rc = render(md)
     assert len(rc.images) == 1
     assert rc.images[0].is_local is True
     assert rc.images[0].note
-    assert "图片待处理" in rc.body
+    assert "【图1】" in rc.body
     assert "<img" not in rc.body
     # 站内上传提醒
     assert any("上传到站内" in w for w in rc.warnings)
@@ -101,16 +101,15 @@ def test_local_image_warns_and_collected():
     assert any("本地" in w for w in rc.warnings)
 
 
-def test_remote_image_output():
-    """⑥ 远程图正常输出 <img> 并进 images。"""
+def test_remote_image_is_placeholder_not_img():
+    """⑥ B站不接受外链图：远程图也渲染成【图N】占位（而非会裂的 <img>）。"""
     md = "![远程](https://e.com/a.jpg)\n"
     rc = render(md)
     assert len(rc.images) == 1
     assert rc.images[0].is_local is False
     assert rc.images[0].note == ""
-    assert '<img src="https://e.com/a.jpg"' in rc.body
-    assert 'alt="远程"' in rc.body
-    # 远程图仍提醒需上传站内
+    assert "【图1】" in rc.body and "远程" in rc.body
+    assert "<img" not in rc.body  # 关键：不再输出会在 B站 裂掉的外链 <img>
     assert any("上传到站内" in w for w in rc.warnings)
 
 
