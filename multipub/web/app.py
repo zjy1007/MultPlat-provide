@@ -4,6 +4,8 @@
 - GET  /api/platforms  → 平台列表 + 约束（前端建 Tab/字数提示用）
 - POST /api/adapt       → 确定性适配（实时预览走这条，无副作用）
 - POST /api/publish     → 适配 + 模拟发布（一键发布走这条）
+- POST /api/style       → LLM 风格适配（按钮触发，不进实时预览链路）
+- POST /api/upload      → 粘贴/上传图片 → 返回可访问 URL（让预览能显示图片）
 
 核心层完全复用：本文件不含任何适配逻辑，只做 HTTP 编排。
 """
@@ -13,7 +15,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -25,8 +27,15 @@ from multipub.core.registry import available_platforms, get_platform
 from multipub.core.style import LLMStyleAdapter, StyleAdapter, StyleError, style_for_platform
 from multipub.publishers.base import MockPublisher
 
+from .imagehost import make_image_host
+
 app = FastAPI(title="MultiPub")
 STATIC = Path(__file__).parent / "static"
+UPLOADS = STATIC / "uploads"
+UPLOADS.mkdir(parents=True, exist_ok=True)
+
+# 允许上传的图片扩展名（svg 仍可上传，但适配器会按平台告警）
+_IMG_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"}
 
 # 可注入的风格适配器工厂（测试时可替换，避免打真实 API）
 style_adapter_factory = lambda: LLMStyleAdapter()  # noqa: E731
@@ -132,6 +141,26 @@ def api_style(req: StyleRequest) -> dict:
         "note": result.note,
         "rendered": _rc_dict(rendered) if rendered else None,
     }
+
+
+@app.post("/api/upload")
+async def api_upload(request: Request, file: UploadFile) -> dict:
+    """保存粘贴/上传的图片，返回可访问 URL。
+
+    图床可插拔（见 imagehost.py）：默认本地（返回绝对 http URL，仅本机预览可见）；
+    配置 MULTIPUB_IMAGE_HOST=imgbb + IMGBB_KEY 后转存公网，复制到平台才能带图。
+    返回绝对 URL 很关键：make_image_ref 把单斜杠开头判为本地图、会出占位。
+    """
+    ext = (file.filename or "image.png").rsplit(".", 1)[-1].lower()
+    if ext not in _IMG_EXTS:
+        return {"error": f"不支持的图片格式：.{ext}"}
+    data = await file.read()
+    try:
+        host = make_image_host(UPLOADS)
+        url = host.save(data, file.filename or "image.png", str(request.base_url))
+    except Exception as e:
+        return {"error": f"上传失败：{e}"}
+    return {"url": url, "public": host.public, "filename": file.filename}
 
 
 @app.get("/")
