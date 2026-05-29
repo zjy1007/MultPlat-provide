@@ -46,22 +46,22 @@
                                         ▼
                     ┌─────────────────────────────────────────────┐
                     │  StyleAdapter (可选):  LLM 按平台调性改写     │
-                    │  —— 输入 IR + 平台画像，输出改写后的 IR       │
+                    │  —— 源 Markdown + 平台画像，输出平台化 Markdown│
+                    │     （按钮触发，不进实时预览链路；产物再走 render）│
                     └───────────────────┬─────────────────────────┘
                                         │
               ┌─────────────────────────┼─────────────────────────┐
               ▼                         ▼                          ▼
         ┌───────────┐            ┌───────────┐             ┌───────────┐
         │ WeChat    │            │ Zhihu     │             │ Xiaohongshu│   …每个平台一个适配器
-        │ Platform  │            │ Platform  │             │ Platform   │
+        │ Platform  │            │ Platform  │             │ Platform   │   （仅 render，纯函数）
         │ render()  │            │ render()  │             │ render()   │
-        │ publish() │            │ publish() │             │ publish()  │
         └─────┬─────┘            └─────┬─────┘             └─────┬─────┘
               ▼                        ▼                         ▼
         RenderedContent          RenderedContent           RenderedContent
               │                        │                         │
               ▼                        ▼                         ▼
-        Publisher (Mock | WeChatDraft | …)  ──► PublishResult ──► report.json
+        Publisher (v1 仅 Mock | 未来 WeChatDraft…)  ──► PublishResult
 ```
 
 ### 分层职责
@@ -110,41 +110,51 @@
 
 ## 4. 数据模型（中间表示 IR）
 
-IR 是整个架构的基石——**它让"加平台"和"加输入格式"互相解耦**（N 个输入 + M 个平台从 N×M 降为 N+M）。
+IR 是整个架构的基石——它让"加平台"互相解耦：加平台只需写一个消费 IR 的适配器，不动解析层。
+
+**关键决策：行内结构 v1 就保留**（不塞进 `text` 字符串）。因为行内变换正是平台差异最大处——公众号链接转脚注、小红书链接转 `文字(URL)`、纯文本平台去强调——若推迟到 v2，会逼适配器二次解析字符串，越往后越脏。所以 IR 是一棵「块级 + 行内」双层节点树（实际实现见 `multipub/core/document.py`）：
 
 ```python
-# document.py —— 平台无关的文档中间表示
-from dataclasses import dataclass, field
-from enum import Enum
+# document.py —— 平台无关的文档中间表示（节选）
+# 行内节点
+class Inline: ...
+@dataclass class Text(Inline):          content: str
+@dataclass class Strong(Inline):        children: list[Inline]
+@dataclass class Emphasis(Inline):      children: list[Inline]
+@dataclass class Strikethrough(Inline): children: list[Inline]
+@dataclass class CodeSpan(Inline):      content: str
+@dataclass class Link(Inline):          url: str; children: list[Inline]; title: str | None = None
+@dataclass class Image(Inline):         url: str; alt: str = ""; title: str | None = None
+@dataclass class LineBreak(Inline):     pass
 
-class BlockType(Enum):
-    HEADING = "heading"
-    PARAGRAPH = "paragraph"
-    IMAGE = "image"
-    CODE = "code"
-    QUOTE = "quote"
-    LIST = "list"
-    TABLE = "table"
-    DIVIDER = "divider"
-
-@dataclass
-class Block:
-    type: BlockType
-    text: str = ""                       # 纯文本/富文本
-    level: int = 0                       # heading 级别 / list 缩进
-    meta: dict = field(default_factory=dict)  # 如 image: {src, alt}; code: {lang}
+# 块级节点
+class Block: ...
+@dataclass class Heading(Block):      level: int; children: list[Inline]
+@dataclass class Paragraph(Block):    children: list[Inline]
+@dataclass class CodeBlock(Block):    code: str; lang: str | None = None
+@dataclass class BlockQuote(Block):   children: list[Block]
+@dataclass class ListItem:            children: list[Block]
+@dataclass class ListBlock(Block):    ordered: bool; items: list[ListItem]
+@dataclass class ThematicBreak(Block): pass
+@dataclass class TableCell:           children: list[Inline]; align: str | None = None
+@dataclass class Table(Block):        header: list[TableCell]; rows: list[list[TableCell]]
 
 @dataclass
 class Document:
-    title: str
-    blocks: list[Block]
+    title: str = ""
+    blocks: list[Block] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     cover: str | None = None
     summary: str | None = None
     raw_markdown: str = ""               # 保留原文，供需要 markdown 的平台直用
 ```
 
-> 富文本（加粗/链接/行内代码）的处理方式由实现深度决定：v1 可先用"段落级 HTML 内联 span"或保留行内 markdown，§7 详述渐进策略。
+**配套遍历辅助**（`document.py`）：
+- `inline_to_text(nodes)` —— 拍平成纯文本（用于字数估算 / 图片 alt 提取，**会丢弃链接 URL**）。
+- `render_inline(nodes, visit)` —— 通用行内遍历器，`visit(node, render_children)->str`，适配器只写"每种节点产出什么"，递归骨架复用。**这是适配器渲染行内的入口**（能拿到 `Link.url`）。
+- `iter_images(doc)` / `plain_text(doc)` —— 收集全部图片 / 整篇拍平。
+
+> 解析层 `parser.py` 是一层「薄归一化」：mistune 的 AST → 上述 IR。换解析器或加输入格式只改这一处，不波及任何适配器。
 
 ---
 
@@ -152,41 +162,50 @@ class Document:
 
 新增平台只需实现这一个抽象类并注册，**不触碰核心**（开闭原则）。
 
+**设计细化（相对早期草案）**：`Platform` 只负责 `render`（纯函数、无副作用，利于实时预览与快照测试）；**发布是独立关注点**，由 `Publisher` 承担、`pipeline` 编排——每个平台不必知道"如何发布"。
+
 ```python
 # platform.py
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class PlatformConstraints:
-    supports_html: bool          # 公众号/B站=True
-    supports_markdown: bool      # 知乎=部分True，小红书=False
-    max_title_len: int | None    # 小红书标题 20 字
-    max_body_len: int | None     # 小红书正文 1000 字
-    max_images: int | None
-    allows_external_links: bool  # 公众号正文不能放外链
-    emoji_style: str             # "none" | "moderate" | "rich"
+    supports_html: bool = False       # 公众号/知乎/B站=True
+    supports_markdown: bool = False   # 知乎=True，小红书=False
+    max_title_len: int | None = None  # 小红书标题 20 字
+    max_body_len: int | None = None   # 小红书正文 1000 字
+    max_images: int | None = None
+    allows_external_links: bool = True
+    emoji_style: str = "none"         # "none" | "moderate" | "rich"
+
+@dataclass
+class ImageRef:                       # 适配产物中的图片及其可发布性判定
+    url: str
+    alt: str = ""
+    is_local: bool = False
+    note: str = ""                    # 非空表示需人工处理（本地图/svg 等）
 
 @dataclass
 class RenderedContent:
     platform: str
     title: str
-    body: str                    # HTML 或 文本 或 markdown
-    body_format: str             # "html" | "markdown" | "text"
-    images: list[str]
-    warnings: list[str]          # 适配过程中触发的约束告警（如截断）
+    body: str                         # HTML / 文本 / markdown
+    body_format: str                  # "html" | "markdown" | "text"
+    images: list[ImageRef] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)  # 约束告警，不静默截断
 
 class Platform(ABC):
-    name: str
-    constraints: PlatformConstraints
+    name: str = ""
+    display_name: str = ""
+    constraints: PlatformConstraints = PlatformConstraints()
 
     @abstractmethod
-    def render(self, doc: "Document", opts: dict) -> RenderedContent:
+    def render(self, doc: "Document", opts: dict | None = None) -> RenderedContent:
         """格式适配：IR → 平台成品。纯函数，无副作用。"""
 
-    @abstractmethod
-    def publish(self, content: RenderedContent, creds: dict | None) -> "PublishResult":
-        """发布：默认委托给注入的 Publisher。"""
+# 共享辅助：make_image_ref(url, alt) 按统一规则判定本地/公网/svg（编码自粘贴验证结论）
+# 发布：见 publishers/base.py —— Publisher 抽象 + MockPublisher（v1 仅 Mock）
 ```
 
 ### 注册机制（插件化）
@@ -240,27 +259,30 @@ class Xiaohongshu(Platform): ...
 1. **格式适配（确定性，必做）**：结构转换、内联样式、字数约束、图片占位。`render()` 内完成。
 2. **风格适配（LLM，可选）**：语气改写、emoji 注入、长度伸缩。`StyleAdapter` 完成，可关闭。
 
-### 风格适配（StyleAdapter）
+### 风格适配（StyleAdapter，`core/style.py`）
+LLM 作**前置改写器**：源 Markdown → 平台化 Markdown（产物可被用户继续编辑，再走确定性 render）。因此 LLM **永不进实时预览/防抖链路**，下游全程可快照、可复现。
+
 ```python
 class StyleAdapter(ABC):
-    @abstractmethod
-    def adapt(self, doc: Document, platform: PlatformProfile) -> Document: ...
+    def available(self) -> bool: ...                       # 当前是否可用（LLM 需 key/SDK）
+    def adapt(self, markdown: str, profile: PlatformProfile) -> str: ...  # MD → 平台化 MD
 
-# LLM 实现：按平台画像构造 prompt，调用 LLM API
-class LLMStyleAdapter(StyleAdapter): ...
-# 降级实现：原样返回（无 LLM 时）
-class NoopStyleAdapter(StyleAdapter): ...
+class NoopStyleAdapter(StyleAdapter): ...   # 直通，默认（= 关闭风格适配，回退纯格式适配）
+class LLMStyleAdapter(StyleAdapter): ...    # 调用 Claude；complete 可注入便于测试；
+                                            # 无 ANTHROPIC_API_KEY/SDK 时优雅降级（抛 StyleError）
 ```
-平台画像 `PlatformProfile`（调性、目标读者、长度偏好、emoji 密度、禁忌）以**配置/YAML**描述，便于不写代码就调风格。
+平台画像 `PlatformProfile`（调性、目标读者、长度偏好、emoji 密度、宜忌）以 **`multipub/profiles/*.yaml`** 描述，便于不写代码就调风格。系统提示按平台稳定，开启 prompt caching 降本提速。
 
 ---
 
-## 7. 富文本处理的渐进策略
+## 7. 富文本处理策略（行内结构 v1 已落地）
 
-行内格式（加粗、链接、行内代码、图片）是最容易踩坑的地方，分三档落地：
-- **v1（够用）**：用成熟库（`markdown-it-py` / `mistune`）把每个块渲染成 HTML，平台 renderer 在块级 HTML 上做内联样式替换 / 文本提取。小红书走"strip 成纯文本 + 保留链接为括号注释"。
-- **v2（精细）**：IR 内引入行内节点（`InlineText/Bold/Link/Code`），renderer 精确控制每种平台对行内元素的呈现。
-- **v3**：表格、公式、脚注等长尾元素的逐平台优化。
+行内格式（加粗、链接、行内代码、删除线、图片）是平台差异最大、最容易踩坑的地方。实现选择：
+- **IR 内置行内节点**（`Text/Strong/Emphasis/Strikethrough/CodeSpan/Link/Image/LineBreak`），用 `mistune` 的树状 AST 解析后归一化得到——**v1 就做，不推迟**。
+- 适配器用 `render_inline(nodes, visit)` 精确控制每种平台对每种行内元素的呈现：公众号→内联样式 HTML、知乎→Markdown、小红书→纯文本且链接转 `文字(URL)`、B站→HTML。
+- 已覆盖表格（`Table`）；公式、脚注等长尾元素为后续可扩展项。
+
+> 这套行内结构正是「并行评审」推动落地的：早期草案曾想把行内推到 v2，评审指出会反噬，遂在 v1 落地——并在 Phase 1 两个适配器并行实现时，反向补出了 `render_inline` 通用遍历器（消除各适配器重复的递归骨架）。
 
 ---
 
@@ -282,53 +304,47 @@ class NoopStyleAdapter(StyleAdapter): ...
 
 ---
 
-## 9. 技术选型（推荐，待确认）
+## 9. 技术选型（实际实现）
 
 | 项 | 选型 | 理由 |
 |---|---|---|
-| 语言 | **Python 3.11+** | Markdown 生态成熟、适配逻辑表达力强、易写 CLI |
-| Markdown 解析 | `markdown-it-py` | token 流可控，扩展性好 |
-| CLI | `typer` / `click` | 子命令清晰 |
-| 配置 | `pydantic` + YAML | 平台画像/约束声明式管理 |
-| LLM | LLM API | 风格适配，带缓存 |
-| **Web 后端** | **FastAPI + uvicorn** | 暴露 pipeline，异步、自带 OpenAPI 文档 |
+| 语言 | **Python 3.11+** | Markdown 生态成熟、适配逻辑表达力强 |
+| Markdown 解析 | **`mistune` 3.x** | 产出**树状 AST 且带行内子节点**，天然支撑"行内 v1"，比扁平 token 流更适合本场景 |
+| front-matter | **`pyyaml`** | 解析标题/标签/封面等元数据 |
+| LLM | **Anthropic Claude**（`anthropic` SDK，可选 `[llm]`） | 风格适配，开启 prompt caching；无 key 优雅降级 |
+| **Web 后端** | **FastAPI + uvicorn**（可选 `[web]`） | 暴露 pipeline，异步、自带 OpenAPI 文档 |
 | **Web 前端** | **原生 HTML + JS（零构建）** | 单页编辑 + 预览，无 Node 构建链；复杂化后再迁 React |
-| 测试 | `pytest` + 快照测试 | 适配是确定性转换，最适合快照回归 |
+| 测试 | **`pytest`** | 适配是确定性转换，最适合回归；LLM 路径用注入的假 complete，不打真实 API |
 
 ---
 
-## 10. 目录结构（规划）
+## 10. 目录结构（实际）
 
 ```
 multipub/
 ├── core/
-│   ├── document.py        # IR 数据模型
-│   ├── parser.py          # markdown → Document
-│   ├── platform.py        # Platform / RenderedContent / Constraints 抽象
-│   ├── registry.py        # 平台注册表
-│   ├── pipeline.py        # 编排：parse → adapt → render → publish
-│   └── style/
-│       ├── adapter.py     # StyleAdapter 抽象 + Noop
-│       └── llm.py         # LLMStyleAdapter
-├── platforms/
-│   ├── wechat.py
-│   ├── zhihu.py
-│   ├── bilibili.py
-│   └── xiaohongshu.py
+│   ├── document.py        # IR：行内/块级节点 + 遍历辅助(inline_to_text/render_inline/iter_images)
+│   ├── parser.py          # 薄归一化层：mistune AST → Document IR（含 front-matter）
+│   ├── platform.py        # Platform 抽象 + RenderedContent/Constraints/ImageRef + make_image_ref
+│   ├── registry.py        # @register 平台注册表
+│   ├── pipeline.py        # 编排：adapt()只适配 / run()适配+发布
+│   └── style.py           # StyleAdapter / NoopStyleAdapter / LLMStyleAdapter + 画像加载
+├── platforms/             # 每个平台一个适配器（render-only），import 即注册
+│   ├── wechat.py          # 公众号 → 内联样式 HTML
+│   ├── xiaohongshu.py     # 小红书 → 纯文本 + 话题
+│   ├── zhihu.py           # 知乎 → Markdown
+│   └── bilibili.py        # B站专栏 → HTML
 ├── publishers/
 │   └── base.py            # Publisher 抽象 + MockPublisher（v1 仅此）
-├── profiles/              # 各平台风格画像（YAML）
-│   ├── wechat.yaml
-│   └── xiaohongshu.yaml
+├── profiles/              # 各平台风格画像（YAML）：wechat/xiaohongshu/zhihu/bilibili
 ├── web/
-│   ├── app.py             # FastAPI：/api/adapt /api/publish /api/platforms
-│   └── static/
-│       ├── index.html     # 单页：编辑器 + 多平台预览
-│       └── app.js
-└── tests/
-    ├── fixtures/          # 输入样例 + 期望产物快照
-    └── test_*.py
+│   ├── app.py             # FastAPI：/api/platforms /api/adapt /api/publish /api/style
+│   └── static/            # index.html + app.js（单页：编辑器 + 多平台实时预览）
+tests/                     # test_core_contract / test_<platform> / test_web / test_style
+examples/article.md · validation/（粘贴验证套件）
 ```
+
+> 实测兑现"加平台零改核心"：知乎、B站两个适配器各只新增 `platforms/<name>.py` + 注册一行，`core/` 一行未改。
 
 ---
 

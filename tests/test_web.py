@@ -1,7 +1,9 @@
-"""Web 层冒烟测试：三个接口 + 静态首页。"""
+"""Web 层冒烟测试：接口 + 静态首页 + 风格适配。"""
 
 from fastapi.testclient import TestClient
 
+import multipub.web.app as webapp
+from multipub.core.style import LLMStyleAdapter
 from multipub.web.app import app
 
 client = TestClient(app)
@@ -44,3 +46,32 @@ def test_unknown_platform_ignored():
     r = client.post("/api/adapt", json={"markdown": "x", "platforms": ["wechat", "nope"]})
     assert r.status_code == 200
     assert set(r.json()["results"].keys()) == {"wechat"}
+
+
+def test_style_unavailable_without_key(monkeypatch):
+    # 工厂返回一个无 key 的适配器 → 优雅降级，不报错
+    monkeypatch.setattr(webapp, "style_adapter_factory", lambda: LLMStyleAdapter(api_key=None))
+    r = client.post("/api/style", json={"markdown": "内容", "platform": "xiaohongshu"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert "ANTHROPIC_API_KEY" in body["note"]
+
+
+def test_style_success_with_injected_adapter(monkeypatch):
+    monkeypatch.setattr(
+        webapp, "style_adapter_factory",
+        lambda: LLMStyleAdapter(complete=lambda s, u: "活泼版✨ #测试#"),
+    )
+    r = client.post("/api/style", json={"markdown": "原文", "platform": "xiaohongshu"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["changed"] is True
+    assert "活泼版" in body["styled"]
+    assert body["rendered"]["body_format"] == "text"  # 风格化后仍走确定性 render
+
+
+def test_style_unknown_platform():
+    r = client.post("/api/style", json={"markdown": "x", "platform": "telegram"})
+    assert r.json()["available"] is False

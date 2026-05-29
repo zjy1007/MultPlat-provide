@@ -22,15 +22,24 @@ import multipub.platforms  # noqa: F401  导入以触发平台注册
 from multipub.core.pipeline import adapt, run
 from multipub.core.platform import RenderedContent
 from multipub.core.registry import available_platforms, get_platform
+from multipub.core.style import LLMStyleAdapter, StyleAdapter, StyleError, style_for_platform
 from multipub.publishers.base import MockPublisher
 
 app = FastAPI(title="MultiPub")
 STATIC = Path(__file__).parent / "static"
 
+# 可注入的风格适配器工厂（测试时可替换，避免打真实 API）
+style_adapter_factory = lambda: LLMStyleAdapter()  # noqa: E731
+
 
 class ContentRequest(BaseModel):
     markdown: str = ""
     platforms: list[str] | None = None
+
+
+class StyleRequest(BaseModel):
+    markdown: str = ""
+    platform: str
 
 
 def _known(platforms: list[str] | None) -> list[str]:
@@ -91,6 +100,37 @@ def api_publish(req: ContentRequest) -> dict:
             }
             for name, pr in results.items()
         }
+    }
+
+
+@app.post("/api/style")
+def api_style(req: StyleRequest) -> dict:
+    """LLM 风格适配（按钮触发，不进实时预览链路）。
+
+    无 key / 未知平台 / 调用失败都优雅返回，不抛 500。
+    """
+    if req.platform not in available_platforms():
+        return {"available": False, "note": f"未知平台：{req.platform}"}
+
+    adapter: StyleAdapter = style_adapter_factory()
+    if not adapter.available():
+        return {
+            "available": False,
+            "note": "未配置 ANTHROPIC_API_KEY，无法使用 LLM 风格适配。设置后重启服务即可启用。",
+        }
+    try:
+        result = style_for_platform(req.markdown, req.platform, adapter)
+    except StyleError as e:
+        return {"available": True, "error": str(e)}
+
+    rendered = adapt(result.styled, [req.platform]).get(req.platform)
+    return {
+        "available": True,
+        "original": result.original,
+        "styled": result.styled,
+        "changed": result.changed,
+        "note": result.note,
+        "rendered": _rc_dict(rendered) if rendered else None,
     }
 
 
