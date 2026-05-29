@@ -27,12 +27,10 @@ pip install -e ".[web,llm]"
 # 启动 Web 工具
 uvicorn multipub.web.app:app --reload
 # 打开 http://127.0.0.1:8000 ，左侧写 Markdown，右侧实时多平台预览
-
-# （可选）启用 LLM 风格适配：配置 key 后重启
-export ANTHROPIC_API_KEY=sk-...
 ```
 
-> 不配 `ANTHROPIC_API_KEY` 也能用：格式适配、实时预览、模拟发布全部可用；仅“✨ LLM 风格适配”按钮会提示未启用并优雅降级。
+> **LLM 风格适配（可选）**：在页面顶部「✨ LLM 设置」里选择厂商（DeepSeek / 千问 Qwen / 豆包 Doubao）并粘贴对应 API key 即可，**无需改环境变量**。key 仅存于浏览器、随请求内存流转，不落服务器、不入日志。
+> 不填 key 也能用：格式适配、实时预览、模拟发布全部可用；点“✨ 用 LLM 适配风格”会提示先填 key。改写结果以「待采用」呈现，可**采用 / 舍弃**。
 
 ### 输入示例 `article.md`
 
