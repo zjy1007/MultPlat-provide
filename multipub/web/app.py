@@ -24,7 +24,12 @@ import multipub.platforms  # noqa: F401  导入以触发平台注册
 from multipub.core.pipeline import adapt, run
 from multipub.core.platform import RenderedContent
 from multipub.core.registry import available_platforms, get_platform
-from multipub.core.style import LLMStyleAdapter, StyleAdapter, StyleError, style_for_platform
+from multipub.core.style import (
+    PROVIDERS,
+    StyleError,
+    make_style_adapter,
+    style_for_platform,
+)
 from multipub.publishers.base import MockPublisher
 
 from .imagehost import make_image_host
@@ -37,8 +42,9 @@ UPLOADS.mkdir(parents=True, exist_ok=True)
 # 允许上传的图片扩展名（svg 仍可上传，但适配器会按平台告警）
 _IMG_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"}
 
-# 可注入的风格适配器工厂（测试时可替换，避免打真实 API）
-style_adapter_factory = lambda: LLMStyleAdapter()  # noqa: E731
+# 可注入的风格适配器工厂（测试时可替换，避免打真实 API）。
+# 入参 (provider, api_key, model) 来自页面「LLM 设置」，key 仅在内存中流转、不落盘。
+style_adapter_factory = make_style_adapter
 
 
 class ContentRequest(BaseModel):
@@ -49,6 +55,9 @@ class ContentRequest(BaseModel):
 class StyleRequest(BaseModel):
     markdown: str = ""
     platform: str
+    provider: str | None = None   # deepseek | qwen | doubao（页面选择）
+    api_key: str | None = None    # 页面填写，仅内存流转、不落盘
+    model: str | None = None      # 可选，覆盖该 provider 默认模型（豆包常需填接入点 id）
 
 
 def _known(platforms: list[str] | None) -> list[str]:
@@ -86,6 +95,7 @@ def api_platforms() -> dict:
                     "max_title_len": c.max_title_len,
                     "max_body_len": c.max_body_len,
                     "emoji_style": c.emoji_style,
+                    "embeds_remote_images": c.embeds_remote_images,
                 },
             }
         )
@@ -112,20 +122,32 @@ def api_publish(req: ContentRequest) -> dict:
     }
 
 
+@app.get("/api/providers")
+def api_providers() -> dict:
+    """供前端「LLM 设置」下拉用：可选模型厂商 + 默认模型 + 提示。"""
+    return {
+        "providers": [
+            {"name": k, "label": v.label, "default_model": v.default_model, "note": v.note}
+            for k, v in PROVIDERS.items()
+        ]
+    }
+
+
 @app.post("/api/style")
 def api_style(req: StyleRequest) -> dict:
     """LLM 风格适配（按钮触发，不进实时预览链路）。
 
+    provider/api_key/model 来自页面「LLM 设置」，key 仅内存流转、不落盘、不记日志。
     无 key / 未知平台 / 调用失败都优雅返回，不抛 500。
     """
     if req.platform not in available_platforms():
         return {"available": False, "note": f"未知平台：{req.platform}"}
 
-    adapter: StyleAdapter = style_adapter_factory()
+    adapter = style_adapter_factory(req.provider, req.api_key, req.model)
     if not adapter.available():
         return {
             "available": False,
-            "note": "未配置 ANTHROPIC_API_KEY，无法使用 LLM 风格适配。设置后重启服务即可启用。",
+            "note": "未填写 API key —— 请在页面顶部「LLM 设置」选择模型厂商并填入对应 key。",
         }
     try:
         result = style_for_platform(req.markdown, req.platform, adapter)
