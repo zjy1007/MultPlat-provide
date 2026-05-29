@@ -5,45 +5,88 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>MultiPub · 多平台内容发布工具</title>
 <style>
+  /* ---- design tokens ---- */
+  :root {
+    --brand: #5b5bd6; --brand-600: #4f47cc; --brand-50: #eef0fb;
+    --wechat: #07c160; --xiaohongshu: #ff2442; --zhihu: #0084ff; --bilibili: #fb7299;
+    --ink: #1f2329; --ink-2: #5a6472; --ink-3: #97a0b0;
+    --line: #eaecf0; --line-2: #f4f6f8;
+    --bg-soft: #f6f7f9;
+    --ok: #1a7a43; --ok-bg: #eaf7ef; --ok-border: #c2e7cf;
+    --warn: #8a5a00; --warn-bg: #fff8e6; --warn-border: #ffe2a8;
+    --style: #9e1068; --style-bg: #fff0f6; --style-border: #ffc7e0;
+    --r-sm: 6px; --r: 8px; --r-lg: 12px; --r-pill: 999px;
+    --sh-sm: 0 1px 2px rgba(16,24,40,.05);
+    --sh: 0 6px 20px rgba(16,24,40,.08);
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f1f1f; height: 100vh; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 16px; padding: 10px 18px; border-bottom: 1px solid #eee; flex-wrap: wrap; }
-  header h1 { font-size: 16px; margin: 0; color: #07c160; white-space: nowrap; }
-  header .sub { font-size: 12px; color: #999; }
-  .platforms { display: flex; gap: 12px; flex-wrap: wrap; }
-  .platforms label { font-size: 13px; cursor: pointer; user-select: none; }
-  .spacer { flex: 1; }
-  button { font-size: 13px; padding: 7px 14px; border-radius: 5px; border: 1px solid #07c160; background: #07c160; color: #fff; cursor: pointer; }
-  button.ghost { background: #fff; color: #07c160; }
-  button:disabled { opacity: .5; cursor: default; }
-  #status { font-size: 12px; color: #888; min-width: 80px; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); background: #fff; height: 100vh; display: flex; flex-direction: column; -webkit-font-smoothing: antialiased; }
 
+  /* ---- header ---- */
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: #fff; }
+  header h1 { display: flex; align-items: center; gap: 9px; font-size: 18px; margin: 0; color: var(--ink); white-space: nowrap; font-weight: 700; letter-spacing: -.2px; }
+  header h1::before { content: ""; width: 22px; height: 22px; border-radius: 7px; background: linear-gradient(135deg, var(--brand), #8b7cf0); box-shadow: var(--sh-sm); }
+  header .sub { font-size: 12px; color: var(--ink-3); }
+  .platforms { display: flex; gap: 8px; flex-wrap: wrap; padding-left: 14px; border-left: 1px solid var(--line); }
+  .platforms label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 5px 12px; border-radius: var(--r-pill); border: 1px solid var(--line); color: var(--ink-2); background: #fff; cursor: pointer; user-select: none; transition: all .15s ease; }
+  .platforms label:hover { border-color: var(--ink-3); }
+  .platforms label input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .platforms label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--pc, var(--ink-3)); flex: none; }
+  .platforms label:has(input[data-name="wechat"])      { --pc: var(--wechat); }
+  .platforms label:has(input[data-name="xiaohongshu"]) { --pc: var(--xiaohongshu); }
+  .platforms label:has(input[data-name="zhihu"])       { --pc: var(--zhihu); }
+  .platforms label:has(input[data-name="bilibili"])    { --pc: var(--bilibili); }
+  .platforms label:has(input:checked) { border-color: var(--pc, var(--brand)); color: var(--pc, var(--brand)); background: color-mix(in srgb, var(--pc, var(--brand)) 9%, #fff); font-weight: 600; }
+  .spacer { flex: 1; }
+  button { font-size: 13px; padding: 8px 16px; border-radius: var(--r-sm); border: 1px solid var(--brand); background: var(--brand); color: #fff; cursor: pointer; font-weight: 600; transition: all .15s ease; }
+  button:hover { background: var(--brand-600); border-color: var(--brand-600); }
+  button.ghost { background: #fff; color: var(--ink-2); border-color: var(--line); font-weight: 500; }
+  button.ghost:hover { background: var(--bg-soft); color: var(--brand); border-color: var(--brand); }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { font-size: 12px; color: var(--ink-3); min-width: 80px; }
+
+  /* ---- layout ---- */
   main { flex: 1; display: flex; min-height: 0; }
   .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .pane.left { border-right: 1px solid #eee; }
-  .pane h2 { font-size: 12px; color: #999; margin: 0; padding: 8px 14px; border-bottom: 1px solid #f2f2f2; font-weight: 500; }
-  #editor { flex: 1; border: none; outline: none; resize: none; padding: 16px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; line-height: 1.7; }
+  .pane.left { border-right: 1px solid var(--line); }
+  .pane h2 { font-size: 11px; letter-spacing: .4px; text-transform: uppercase; color: var(--ink-3); margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--line-2); font-weight: 600; }
+  #editor { flex: 1; border: none; outline: none; resize: none; padding: 18px; font-family: "SF Mono", Menlo, ui-monospace, monospace; font-size: 13px; line-height: 1.75; color: var(--ink); background: #fff; }
 
-  .tabs { display: flex; gap: 4px; padding: 8px 12px 0; flex-wrap: wrap; }
-  .tab { font-size: 13px; padding: 6px 12px; border: 1px solid #e5e5e5; border-bottom: none; border-radius: 6px 6px 0 0; background: #fafafa; cursor: pointer; color: #555; }
-  .tab.active { background: #fff; color: #07c160; font-weight: 600; border-color: #07c160; }
-  .tab .badge { display: inline-block; min-width: 8px; height: 8px; border-radius: 50%; margin-left: 5px; }
+  /* ---- preview tabs ---- */
+  .tabs { display: flex; gap: 6px; padding: 10px 14px 0; flex-wrap: wrap; }
+  .tab { display: inline-flex; align-items: center; font-size: 13px; padding: 7px 14px; border: 1px solid var(--line); border-radius: var(--r-sm) var(--r-sm) 0 0; background: var(--bg-soft); cursor: pointer; color: var(--ink-2); transition: color .15s, border-color .15s; }
+  .tab:hover { color: var(--ink); }
+  .tab[data-name="wechat"]      { --pc: var(--wechat); }
+  .tab[data-name="xiaohongshu"] { --pc: var(--xiaohongshu); }
+  .tab[data-name="zhihu"]       { --pc: var(--zhihu); }
+  .tab[data-name="bilibili"]    { --pc: var(--bilibili); }
+  .tab.active { background: #fff; color: var(--pc, var(--brand)); font-weight: 600; border-color: var(--line); border-bottom: 2px solid var(--pc, var(--brand)); margin-bottom: -1px; }
+  .tab .badge { display: inline-block; min-width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; }
   .tab .badge.warn { background: #faad14; }
-  .preview-wrap { flex: 1; overflow: auto; padding: 14px; background: #f7f8fa; }
-  .meta { font-size: 12px; color: #888; margin-bottom: 8px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-  .meta .count.over { color: #e34d59; font-weight: 600; }
-  .warnings { background: #fffbe6; border: 1px solid #ffe58f; border-radius: 5px; padding: 8px 12px; font-size: 12px; color: #874d00; margin-bottom: 10px; }
+
+  /* ---- preview body ---- */
+  .preview-wrap { flex: 1; overflow: auto; padding: 18px; background: var(--bg-soft); }
+  .meta { font-size: 12px; color: var(--ink-2); margin-bottom: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .meta > span { background: #fff; border: 1px solid var(--line); border-radius: var(--r-pill); padding: 4px 11px; line-height: 1.4; }
+  .meta .count.over { color: #fff; background: var(--xiaohongshu); border-color: var(--xiaohongshu); font-weight: 600; }
+
+  /* ---- info strips (receipt / warnings / style) share one system ---- */
+  .receipt, .warnings, .style-panel { font-size: 12px; line-height: 1.6; padding: 10px 14px; border-radius: var(--r); border: 1px solid; margin-bottom: 12px; }
+  .receipt.ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+  .warnings { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn); }
   .warnings ul { margin: 4px 0 0; padding-left: 18px; }
-  .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.06); overflow: hidden; }
-  .card .title { font-size: 17px; font-weight: 700; padding: 14px 16px 0; }
-  iframe.html-preview { width: 100%; border: none; background: #fff; }
-  pre.text-preview { white-space: pre-wrap; word-break: break-word; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 14px; line-height: 1.7; padding: 16px; margin: 0; }
-  .receipt { font-size: 12px; padding: 8px 12px; border-radius: 5px; margin-bottom: 10px; }
-  .receipt.ok { background: #f0f9eb; border: 1px solid #c2e7b0; color: #3a7a1f; }
-  .style-panel { background: #fff0f6; border: 1px solid #ffadd2; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #9e1068; margin-bottom: 10px; }
+  .style-panel { background: var(--style-bg); border-color: var(--style-border); color: var(--style); }
   .style-panel details { margin-top: 6px; }
-  .style-panel summary { cursor: pointer; }
-  .toolbar { display: flex; gap: 8px; padding: 8px 0 0; }
+  .style-panel summary { cursor: pointer; font-weight: 600; }
+
+  /* ---- result card ---- */
+  .card { background: #fff; border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--sh); overflow: hidden; }
+  .card .title { font-size: 17px; font-weight: 700; padding: 14px 16px 0; }
+  iframe.html-preview { width: 100%; border: none; background: #fff; display: block; }
+  pre.text-preview { white-space: pre-wrap; word-break: break-word; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 14px; line-height: 1.75; padding: 18px; margin: 0; color: var(--ink); }
+
+  /* ---- toolbar ---- */
+  .toolbar { display: flex; gap: 8px; padding: 12px 0 4px; }
 </style>
 </head>
 <body>
