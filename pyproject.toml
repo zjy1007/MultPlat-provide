@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multipub"
+version = "0.0.1"
+description = "多平台内容发布工具：一次写作，多平台格式/风格适配 + 模拟发布"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "mistune>=3.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["multipub*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
