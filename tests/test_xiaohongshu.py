@@ -38,6 +38,16 @@ def _render(md):
     return get_platform("xiaohongshu").render(doc)
 
 
+def test_image_placeholder_in_body_numbered():
+    """图片在正文渲染成【图N】占位，按正文顺序编号、与图片清单一一对应。"""
+    md = "正文一\n\n![第一张](./a.png)\n\n正文二\n\n![第二张](https://e.com/b.jpg)\n"
+    rc = _render(md)
+    assert "【图1】第一张" in rc.body
+    assert "【图2】第二张" in rc.body
+    # 编号与 images 清单顺序一致
+    assert [i.url for i in rc.images] == ["./a.png", "https://e.com/b.jpg"]
+
+
 def test_registered_and_basics():
     rc = _render(SAMPLE)
     assert rc.platform == "xiaohongshu"

@@ -48,22 +48,31 @@ def test_unknown_platform_ignored():
     assert set(r.json()["results"].keys()) == {"wechat"}
 
 
+def test_providers_listed():
+    r = client.get("/api/providers")
+    assert r.status_code == 200
+    names = {p["name"] for p in r.json()["providers"]}
+    assert {"deepseek", "qwen", "doubao"} <= names
+
+
 def test_style_unavailable_without_key(monkeypatch):
-    # 工厂返回一个无 key 的适配器 → 优雅降级，不报错
-    monkeypatch.setattr(webapp, "style_adapter_factory", lambda: LLMStyleAdapter(api_key=None))
+    # 工厂收 (provider, api_key, model)；无 key → 优雅降级，不报错
+    monkeypatch.setattr(webapp, "style_adapter_factory",
+                        lambda *a, **k: LLMStyleAdapter(api_key=None))
     r = client.post("/api/style", json={"markdown": "内容", "platform": "xiaohongshu"})
     assert r.status_code == 200
     body = r.json()
     assert body["available"] is False
-    assert "ANTHROPIC_API_KEY" in body["note"]
+    assert "API key" in body["note"]
 
 
 def test_style_success_with_injected_adapter(monkeypatch):
     monkeypatch.setattr(
         webapp, "style_adapter_factory",
-        lambda: LLMStyleAdapter(complete=lambda s, u: "活泼版✨ #测试#"),
+        lambda *a, **k: LLMStyleAdapter(complete=lambda s, u: "活泼版✨ #测试#"),
     )
-    r = client.post("/api/style", json={"markdown": "原文", "platform": "xiaohongshu"})
+    r = client.post("/api/style", json={"markdown": "原文", "platform": "xiaohongshu",
+                                         "provider": "deepseek", "api_key": "sk-x"})
     assert r.status_code == 200
     body = r.json()
     assert body["available"] is True

@@ -122,9 +122,10 @@ def test_local_image_warns_and_collected():
     assert len(locals_) == 1 and locals_[0].note
     assert len(remotes) == 1 and remotes[0].note == ""
     assert any("本地" in w for w in rc.warnings)
-    # Markdown 正文仍照常写图片
-    assert "![本地](./a.png)" in rc.body
+    # 远程图照常写 Markdown 图（知乎会导入）；本地图无法导入 → 渲染成【图N】占位
     assert "![远程](https://e.com/a.jpg)" in rc.body
+    assert "【图1】" in rc.body
+    assert "![本地](./a.png)" not in rc.body
 
 
 def test_remote_image_no_warning():
