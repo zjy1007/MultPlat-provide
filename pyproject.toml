@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 web = ["fastapi>=0.110", "uvicorn>=0.27"]
+llm = ["anthropic>=0.40"]
 
 [tool.setuptools.packages.find]
 include = ["multipub*"]
