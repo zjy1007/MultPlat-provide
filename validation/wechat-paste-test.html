@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>公众号粘贴可行性验证</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; color: #333; }
+  .toolbar { position: sticky; top: 0; background: #fff; padding: 12px 0; border-bottom: 1px solid #eee; z-index: 10; }
+  button { font-size: 14px; padding: 8px 14px; margin-right: 8px; cursor: pointer; border: 1px solid #07c160; background: #07c160; color: #fff; border-radius: 4px; }
+  button.secondary { background: #fff; color: #07c160; }
+  #status { margin-left: 8px; color: #888; font-size: 13px; }
+  .hint { background: #fffbe6; border: 1px solid #ffe58f; padding: 10px 14px; border-radius: 4px; font-size: 13px; margin: 12px 0; }
+  /* ↓↓↓ 关键:正文用内联样式渲染,这是要被粘贴的内容。这里用 class 仅为演示,
+     真实工具里会用 css_inline 把这些规则内联进每个标签的 style 属性。
+     验证时请用上面的「复制为富文本」按钮,它会把计算后的样式一起写进剪贴板。 */
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button id="copyBtn">① 复制为富文本（推荐机制）</button>
+  <button class="secondary" id="selectBtn">② 仅选中正文（测试朴素全选复制）</button>
+  <span id="status"></span>
+</div>
+
+<div class="hint">
+  <b>这页要回答 3 个问题:</b><br/>
+  A. 用「① 复制为富文本」粘进公众号编辑器,<b>内联样式(标题/加粗/引用/代码块背景)是否保留</b>?<br/>
+  B. 下面有两张图:一张<b>本地图</b>(必失败)、一张<b>公网 URL 图</b>。粘贴后<b>公网图是否被公众号转存显示</b>?(防盗链是唯一变数)<br/>
+  C. 正文里的<b>外链</b>粘贴后是保留为可点链接、还是被吞?(决定我们要不要把链接转脚注)
+</div>
+
+<!-- 被复制的正文区域 -->
+<article id="content">
+  <h1 style="font-size:22px;font-weight:bold;color:#222;margin:24px 0 16px;">一级标题:多平台发布工具验证</h1>
+
+  <p style="font-size:16px;line-height:1.75;margin:16px 0;color:#3f3f3f;">
+    这是一段正文,用来测试<strong style="color:#07c160;font-weight:bold;">加粗强调</strong>、
+    行内代码 <code style="background:#f3f3f3;padding:2px 5px;border-radius:3px;color:#c7254e;font-family:Menlo,monospace;">render()</code>,
+    以及一个<a href="https://example.com" style="color:#576b95;text-decoration:none;">外部链接(测试是否被吞)</a>。
+  </p>
+
+  <h2 style="font-size:18px;font-weight:bold;color:#222;margin:22px 0 14px;border-left:4px solid #07c160;padding-left:10px;">二级标题:引用与代码</h2>
+
+  <blockquote style="margin:16px 0;padding:12px 16px;background:#f7f7f7;border-left:4px solid #ddd;color:#666;font-size:15px;">
+    引用块:一次写作,多平台适配。验证引用样式是否跟着过去。
+  </blockquote>
+
+  <pre style="background:#282c34;color:#abb2bf;padding:16px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code style="font-family:Menlo,monospace;">def render(doc, platform):
+    # 验证代码块背景色与等宽字体是否保留
+    return adapt(doc, platform)</code></pre>
+
+  <ul style="font-size:16px;line-height:1.8;margin:16px 0;padding-left:24px;color:#3f3f3f;">
+    <li>无序列表项一</li>
+    <li>无序列表项二:<strong>嵌套加粗</strong></li>
+  </ul>
+
+  <h3 style="font-size:16px;font-weight:bold;margin:20px 0 12px;">图片测试</h3>
+
+  <p style="font-size:14px;color:#999;margin:8px 0;">本地图(预期失败,带不过去):</p>
+  <img src="./local-image-does-not-exist.png" alt="本地图占位" style="max-width:100%;border:1px dashed #f00;min-height:40px;" />
+
+  <!-- ⚠️ 不要用会 302 的服务(如 picsum.photos):转存失败时无法区分"防盗链"还是"爬虫没跟重定向"。
+       下面两张都是【直链、无重定向】,且来自不同 host,用来对比公众号爬虫的可达性差异。
+       最有价值的做法:把【图 A】换成你真正打算用的图床上的一张 .png/.jpg 直链。 -->
+
+  <p style="font-size:14px;color:#999;margin:16px 0 8px;">公网图 A —— 直链(请替换成你自己图床的直链）:</p>
+  <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fronalpstock_big.jpg" alt="公网图A-海外直链" style="max-width:100%;border-radius:6px;" />
+
+  <p style="font-size:14px;color:#999;margin:16px 0 8px;">公网图 B —— 国内可达 CDN 直链(jsDelivr,对照不同 host)：</p>
+  <img src="https://cdn.jsdelivr.net/gh/twbs/icons@main/icons/image.svg" alt="公网图B-国内CDN直链" style="max-width:100%;border-radius:6px;width:120px;height:120px;background:#fafafa;" />
+
+  <p style="font-size:16px;line-height:1.75;margin:16px 0;color:#3f3f3f;">—— 正文结束,以上全部应作为富文本进入剪贴板 ——</p>
+</article>
+
+<script>
+const status = (m) => { document.getElementById('status').textContent = m; };
+
+// 推荐机制:用 ClipboardItem 同时写 text/html 与 text/plain。
+// 这正是 mdnice / doocs-md 让样式存活的关键——不靠浏览器选区复制。
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  const html = document.getElementById('content').outerHTML;
+  const text = document.getElementById('content').innerText;
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+      }),
+    ]);
+    status('✅ 已作为富文本复制,去公众号编辑器粘贴(Cmd/Ctrl+V)');
+  } catch (e) {
+    status('❌ ClipboardItem 失败(需 https 或 localhost): ' + e.message);
+  }
+});
+
+// 对照组:朴素选区,让用户手动 Cmd+C,验证这种方式是否也能保住样式
+document.getElementById('selectBtn').addEventListener('click', () => {
+  const range = document.createRange();
+  range.selectNode(document.getElementById('content'));
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  status('已选中正文,请手动 Cmd/Ctrl+C 后粘贴,对比与「①」的差异');
+});
+</script>
+</body>
+</html>
