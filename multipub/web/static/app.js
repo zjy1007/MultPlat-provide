@@ -131,7 +131,7 @@ function renderActivePreview() {
 
   const receipt = state.receipts[name];
   const receiptHtml = receipt
-    ? `<div class="receipt ok">✅ ${escapeHtml(receipt.message)} ｜ ${escapeHtml(JSON.stringify(receipt.detail))}</div>`
+    ? `<div class="receipt ok">✅ ${escapeHtml(receipt.message)}</div>`
     : "";
 
   const warningsHtml = r.warnings && r.warnings.length
