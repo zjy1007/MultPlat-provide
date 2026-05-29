@@ -25,12 +25,14 @@ from ..core.platform import (
 from ..core.registry import register
 
 
-def _inline_to_text(nodes: list[D.Inline]) -> str:
+def _inline_to_text(nodes: list[D.Inline], imgmap: dict | None = None) -> str:
     """行内 → 纯文本，与 D.inline_to_text 基本一致，但把 Link 渲染成 `文字(URL)`。
 
     D.inline_to_text 会把 Link 拍成纯文字、丢掉 URL；小红书要求保留 URL 作括号注释，
-    故在此自定义。Image 不出现在正文文字里（走 images 清单）。
+    故在此自定义。Image 渲染成「【图N】alt」占位（N 来自 imgmap，与右侧清单一致），
+    提示创作者按顺序手动配图。
     """
+    imgmap = imgmap or {}
     parts: list[str] = []
     for n in nodes:
         if isinstance(n, D.Text):
@@ -38,7 +40,7 @@ def _inline_to_text(nodes: list[D.Inline]) -> str:
         elif isinstance(n, D.CodeSpan):
             parts.append(n.content)
         elif isinstance(n, D.Link):
-            text = _inline_to_text(n.children)
+            text = _inline_to_text(n.children, imgmap)
             url = n.url or ""
             if url and text:
                 parts.append(f"{text}({url})")
@@ -47,41 +49,44 @@ def _inline_to_text(nodes: list[D.Inline]) -> str:
             else:
                 parts.append(text)
         elif isinstance(n, (D.Strong, D.Emphasis, D.Strikethrough)):
-            parts.append(_inline_to_text(n.children))
+            parts.append(_inline_to_text(n.children, imgmap))
         elif isinstance(n, D.LineBreak):
             parts.append("\n")
-        # Image: 跳过，正文文字里不出现
+        elif isinstance(n, D.Image):
+            num = imgmap.get(id(n))
+            if num:
+                parts.append(f"【图{num}】{n.alt or '图片'}")
     return "".join(parts)
 
 
-def _blocks_to_text(blocks: list[D.Block], depth: int = 0) -> list[str]:
+def _blocks_to_text(blocks: list[D.Block], depth: int = 0, imgmap: dict | None = None) -> list[str]:
     """块序列 → 段落字符串列表（已去掉空段）。"""
     out: list[str] = []
     for b in blocks:
         if isinstance(b, D.Heading):
-            out.append(_inline_to_text(b.children))
+            out.append(_inline_to_text(b.children, imgmap))
         elif isinstance(b, D.Paragraph):
-            out.append(_inline_to_text(b.children))
+            out.append(_inline_to_text(b.children, imgmap))
         elif isinstance(b, D.CodeBlock):
             out.append(b.code)
         elif isinstance(b, D.BlockQuote):
-            inner = _blocks_to_text(b.children, depth)
+            inner = _blocks_to_text(b.children, depth, imgmap)
             # 引用用「…」包裹，便于读者识别这是引述内容
             for line in inner:
                 out.append(f"「{line}」")
         elif isinstance(b, D.ListBlock):
-            out.append(_list_to_text(b, depth))
+            out.append(_list_to_text(b, depth, imgmap))
         elif isinstance(b, D.Table):
-            out.append(_table_to_text(b))
+            out.append(_table_to_text(b, imgmap))
         # ThematicBreak: 跳过（纯文本里分隔线无意义，靠空行分隔）
     return [p for p in out if p.strip()]
 
 
-def _list_to_text(block: D.ListBlock, depth: int) -> str:
+def _list_to_text(block: D.ListBlock, depth: int, imgmap: dict | None = None) -> str:
     indent = "  " * depth
     lines: list[str] = []
     for idx, item in enumerate(block.items, start=1):
-        sub = _blocks_to_text(item.children, depth + 1)
+        sub = _blocks_to_text(item.children, depth + 1, imgmap)
         prefix = f"{idx}. " if block.ordered else "· "
         if not sub:
             lines.append(f"{indent}{prefix}")
@@ -93,13 +98,13 @@ def _list_to_text(block: D.ListBlock, depth: int) -> str:
     return "\n".join(lines)
 
 
-def _table_to_text(table: D.Table) -> str:
+def _table_to_text(table: D.Table, imgmap: dict | None = None) -> str:
     """表格拍平成可读文本，每行用 ' | ' 连接。"""
     rows: list[str] = []
     if table.header:
-        rows.append(" | ".join(_inline_to_text(c.children) for c in table.header))
+        rows.append(" | ".join(_inline_to_text(c.children, imgmap) for c in table.header))
     for row in table.rows:
-        rows.append(" | ".join(_inline_to_text(c.children) for c in row))
+        rows.append(" | ".join(_inline_to_text(c.children, imgmap) for c in row))
     return "\n".join(rows)
 
 
@@ -112,13 +117,18 @@ class Xiaohongshu(Platform):
         max_title_len=20,
         max_body_len=1000,
         emoji_style="rich",
+        embeds_remote_images=False,  # 小红书图片优先、手动配图，正文用【图N】占位引导
     )
 
     def render(self, doc: D.Document, opts: dict | None = None) -> RenderedContent:
         warnings: list[str] = []
 
-        # 1) 正文：结构 → 纯文本段落，空行分隔
-        paragraphs = _blocks_to_text(doc.blocks)
+        # 图片清单（正文顺序）+ 编号映射（id(node) → 第 N 张），供正文【图N】占位与清单对齐
+        imgs = D.iter_images(doc)
+        imgmap = {id(im): i + 1 for i, im in enumerate(imgs)}
+
+        # 1) 正文：结构 → 纯文本段落，空行分隔；图片渲染成【图N】占位
+        paragraphs = _blocks_to_text(doc.blocks, imgmap=imgmap)
         body = "\n\n".join(paragraphs)
 
         # 2) 话题标签追加到末尾
@@ -128,7 +138,7 @@ class Xiaohongshu(Platform):
             body = f"{body}\n\n{tag_line}" if body else tag_line
 
         # 3) 图片清单（图片优先）
-        images = [make_image_ref(img.url, img.alt) for img in D.iter_images(doc)]
+        images = [make_image_ref(img.url, img.alt) for img in imgs]
         for ref in images:
             if ref.note:
                 warnings.append(ref.note)

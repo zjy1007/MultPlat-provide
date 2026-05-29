@@ -85,6 +85,7 @@ class BilibiliPlatform(Platform):
         supports_markdown=False,
         allows_external_links=True,
         emoji_style="moderate",
+        embeds_remote_images=False,  # B站专栏不接受外链图，需上传站内 → 正文用【图N】占位
     )
 
     def render(self, doc: D.Document, opts: dict | None = None) -> RenderedContent:
@@ -126,20 +127,14 @@ class BilibiliPlatform(Platform):
         def render_image(n: D.Image) -> str:
             ref = make_image_ref(n.url, n.alt)
             images.append(ref)
-            # 不论远程还是本地，都提醒图片需上传到站内。
+            num = len(images)  # 与右侧图片清单一一对应的编号（正文顺序）
+            # B站不接受外链图：一律渲染成可见的【图N】占位，提示对应清单里第 N 张手动上传。
             warn(_IMG_UPLOAD_WARNING)
             if ref.note:
-                # 本地图/svg：输出占位说明，把 note 也加进 warnings。
                 warn(ref.note)
-                label = _esc(ref.alt or n.url or "图片")
-                return (
-                    f'<p style="{_STYLE["img_placeholder"]}">'
-                    f"[图片待处理] {label} —— {_esc(ref.note)}</p>"
-                )
-            return (
-                f'<img src="{_esc(ref.url)}" alt="{_esc(ref.alt)}" '
-                f'style="{_STYLE["img"]}" />'
-            )
+            label = _esc(ref.alt or "图片")
+            extra = f" —— {_esc(ref.note)}" if ref.note else "（请上传到 B站站内）"
+            return f'<p style="{_STYLE["img_placeholder"]}">【图{num}】{label}{extra}</p>'
 
         # ----------------------------- 块级 -----------------------------
         def render_blocks(blocks: list[D.Block]) -> str:
