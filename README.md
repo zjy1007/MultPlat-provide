@@ -21,13 +21,18 @@
 ## 🚀 快速开始
 
 ```bash
-# 安装依赖
-pip install -e .
+# 安装依赖（含 Web 与可选 LLM 风格适配）
+pip install -e ".[web,llm]"
 
 # 启动 Web 工具
 uvicorn multipub.web.app:app --reload
 # 打开 http://127.0.0.1:8000 ，左侧写 Markdown，右侧实时多平台预览
+
+# （可选）启用 LLM 风格适配：配置 key 后重启
+export ANTHROPIC_API_KEY=sk-...
 ```
+
+> 不配 `ANTHROPIC_API_KEY` 也能用：格式适配、实时预览、模拟发布全部可用；仅“✨ LLM 风格适配”按钮会提示未启用并优雅降级。
 
 ### 输入示例 `article.md`
 
