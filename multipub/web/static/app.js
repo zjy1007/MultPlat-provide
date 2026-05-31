@@ -52,8 +52,31 @@ async function init() {
   await refresh();
 }
 
-// ---- LLM 设置（厂商 / key / 模型），key 仅存浏览器 sessionStorage，不落服务器 ----
-const LLM = { providers: [] };
+// ---- LLM 设置 ----
+// 凭证「按厂商分开存」：每家记住自己的 key/model，切换厂商自动恢复，只需各输一遍。
+// 仅存浏览器 sessionStorage（关标签页即清），不落服务器、不入日志。
+const LLM = { providers: [], creds: {}, active: null };
+
+function loadLLMStore() {
+  const s = JSON.parse(sessionStorage.getItem("llm") || "{}");
+  LLM.creds = s.creds || {};
+  LLM.active = s.active || null;
+}
+function persistLLMStore() {
+  sessionStorage.setItem("llm", JSON.stringify({ active: LLM.active, creds: LLM.creds }));
+}
+function loadProviderIntoInputs(name) {
+  const c = LLM.creds[name] || {};
+  $("llm-key").value = c.key || "";
+  $("llm-model").value = c.model || "";
+  syncLLMHint();
+}
+function captureInputsToCred() {
+  const name = $("llm-provider").value;
+  LLM.active = name;
+  LLM.creds[name] = { key: $("llm-key").value, model: $("llm-model").value };
+  persistLLMStore();
+}
 
 async function initLLM() {
   const sel = $("llm-provider");
@@ -62,14 +85,16 @@ async function initLLM() {
     LLM.providers = res.providers || [];
     sel.innerHTML = LLM.providers.map((p) => `<option value="${p.name}">${p.label}</option>`).join("");
   } catch (_) {}
-  const saved = JSON.parse(sessionStorage.getItem("llm") || "{}");
-  if (saved.provider) sel.value = saved.provider;
-  $("llm-key").value = saved.key || "";
-  $("llm-model").value = saved.model || "";
-  syncLLMHint();
-  sel.addEventListener("change", () => { $("llm-model").value = ""; syncLLMHint(); saveLLM(); });
-  $("llm-key").addEventListener("input", saveLLM);
-  $("llm-model").addEventListener("input", saveLLM);
+  loadLLMStore();
+  if (LLM.active) sel.value = LLM.active;
+  loadProviderIntoInputs(sel.value);
+  sel.addEventListener("change", () => {
+    LLM.active = sel.value;
+    loadProviderIntoInputs(sel.value); // 切换厂商 → 恢复该家已存的 key/model
+    persistLLMStore();
+  });
+  $("llm-key").addEventListener("input", captureInputsToCred);
+  $("llm-model").addEventListener("input", captureInputsToCred);
 }
 
 function currentProvider() {
@@ -79,11 +104,6 @@ function syncLLMHint() {
   const p = currentProvider();
   $("llm-model").placeholder = p ? `模型（默认 ${p.default_model}）` : "模型（留空用默认）";
   $("llm-hint").textContent = p && p.note ? "💡 " + p.note : "";
-}
-function saveLLM() {
-  sessionStorage.setItem("llm", JSON.stringify({
-    provider: $("llm-provider").value, key: $("llm-key").value, model: $("llm-model").value,
-  }));
 }
 function llmSettings() {
   return {
@@ -162,6 +182,9 @@ function renderActivePreview() {
   const styledActive = !!(info && info.rendered && (info.status === "pending" || info.status === "applied"));
   const r = styledActive ? info.rendered : state.results[name];
   const wrap = $("preview");
+  // 预览卡外框跟随当前平台主题色（CSS 按 .preview-card.<name> 上色）
+  const card = $("previewCard");
+  if (card) card.className = "preview-card" + (name ? " " + name : "");
   if (!r) { wrap.innerHTML = ""; return; }
   const meta = platformMeta(name);
   const maxBody = meta?.constraints?.max_body_len ?? null;
@@ -183,7 +206,7 @@ function renderActivePreview() {
 
   let styleHtml = "";
   if (info && info.unavailable) {
-    styleHtml = `<div class="warnings">✨ ${escapeHtml(info.note || "风格适配不可用")}</div>`;
+    styleHtml = `<div class="info">✨ ${escapeHtml(info.note || "风格适配不可用")}</div>`;
   } else if (info && info.status === "pending") {
     styleHtml = `<div class="style-panel">✨ <b>LLM 风格化结果（待你决定）</b> —— ${info.changed ? "已按平台调性改写，下方为预览" : "改写结果与原文基本一致"}。请审阅后点 <b>采用</b> 或 <b>舍弃</b>。
       <details open><summary>查看改写后的 Markdown</summary><pre class="text-preview" style="background:#fff;border:1px solid var(--line);border-radius:var(--r-sm);">${escapeHtml(info.styled_md || "")}</pre></details></div>`;
@@ -392,6 +415,38 @@ const escapeAttr = escapeHtml; // 属性值同样需要转义引号
 
 editor.addEventListener("input", debounce(refresh, 400));
 $("publishBtn").addEventListener("click", publish);
+
+// 拖拽中间分隔条调整左右宽度；右栏 flex:1 始终吃掉剩余 → 两栏永远铺满
+(function initSplit() {
+  const main = document.querySelector("main");
+  const left = document.querySelector(".pane.left");
+  const gutter = $("gutter");
+  if (!main || !left || !gutter) return;
+  const PAD = 16, GUT = 12, MIN = 22, MAX = 78; // 左右最小/最大占比(%)
+  let dragging = false;
+  gutter.addEventListener("mousedown", (e) => {
+    dragging = true;
+    gutter.classList.add("dragging");
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const rect = main.getBoundingClientRect();
+    const usable = rect.width - PAD * 2 - GUT;
+    const pct = Math.max(MIN, Math.min(MAX, ((e.clientX - rect.left - PAD) / usable) * 100));
+    left.style.flexBasis = pct + "%";
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    gutter.classList.remove("dragging");
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+  });
+  gutter.addEventListener("dblclick", () => { left.style.flexBasis = "50%"; }); // 复位 50/50
+})();
 
 // 粘贴剪贴板图片：上传 → 在光标处插入 markdown 图片语法 → 预览自动显示
 editor.addEventListener("paste", async (e) => {
