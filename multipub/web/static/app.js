@@ -52,8 +52,31 @@ async function init() {
   await refresh();
 }
 
-// ---- LLM 设置（厂商 / key / 模型），key 仅存浏览器 sessionStorage，不落服务器 ----
-const LLM = { providers: [] };
+// ---- LLM 设置 ----
+// 凭证「按厂商分开存」：每家记住自己的 key/model，切换厂商自动恢复，只需各输一遍。
+// 仅存浏览器 sessionStorage（关标签页即清），不落服务器、不入日志。
+const LLM = { providers: [], creds: {}, active: null };
+
+function loadLLMStore() {
+  const s = JSON.parse(sessionStorage.getItem("llm") || "{}");
+  LLM.creds = s.creds || {};
+  LLM.active = s.active || null;
+}
+function persistLLMStore() {
+  sessionStorage.setItem("llm", JSON.stringify({ active: LLM.active, creds: LLM.creds }));
+}
+function loadProviderIntoInputs(name) {
+  const c = LLM.creds[name] || {};
+  $("llm-key").value = c.key || "";
+  $("llm-model").value = c.model || "";
+  syncLLMHint();
+}
+function captureInputsToCred() {
+  const name = $("llm-provider").value;
+  LLM.active = name;
+  LLM.creds[name] = { key: $("llm-key").value, model: $("llm-model").value };
+  persistLLMStore();
+}
 
 async function initLLM() {
   const sel = $("llm-provider");
@@ -62,14 +85,16 @@ async function initLLM() {
     LLM.providers = res.providers || [];
     sel.innerHTML = LLM.providers.map((p) => `<option value="${p.name}">${p.label}</option>`).join("");
   } catch (_) {}
-  const saved = JSON.parse(sessionStorage.getItem("llm") || "{}");
-  if (saved.provider) sel.value = saved.provider;
-  $("llm-key").value = saved.key || "";
-  $("llm-model").value = saved.model || "";
-  syncLLMHint();
-  sel.addEventListener("change", () => { $("llm-model").value = ""; syncLLMHint(); saveLLM(); });
-  $("llm-key").addEventListener("input", saveLLM);
-  $("llm-model").addEventListener("input", saveLLM);
+  loadLLMStore();
+  if (LLM.active) sel.value = LLM.active;
+  loadProviderIntoInputs(sel.value);
+  sel.addEventListener("change", () => {
+    LLM.active = sel.value;
+    loadProviderIntoInputs(sel.value); // 切换厂商 → 恢复该家已存的 key/model
+    persistLLMStore();
+  });
+  $("llm-key").addEventListener("input", captureInputsToCred);
+  $("llm-model").addEventListener("input", captureInputsToCred);
 }
 
 function currentProvider() {
@@ -79,11 +104,6 @@ function syncLLMHint() {
   const p = currentProvider();
   $("llm-model").placeholder = p ? `模型（默认 ${p.default_model}）` : "模型（留空用默认）";
   $("llm-hint").textContent = p && p.note ? "💡 " + p.note : "";
-}
-function saveLLM() {
-  sessionStorage.setItem("llm", JSON.stringify({
-    provider: $("llm-provider").value, key: $("llm-key").value, model: $("llm-model").value,
-  }));
 }
 function llmSettings() {
   return {
