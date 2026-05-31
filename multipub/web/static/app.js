@@ -162,6 +162,9 @@ function renderActivePreview() {
   const styledActive = !!(info && info.rendered && (info.status === "pending" || info.status === "applied"));
   const r = styledActive ? info.rendered : state.results[name];
   const wrap = $("preview");
+  // 预览卡外框跟随当前平台主题色（CSS 按 .preview-card.<name> 上色）
+  const card = $("previewCard");
+  if (card) card.className = "preview-card" + (name ? " " + name : "");
   if (!r) { wrap.innerHTML = ""; return; }
   const meta = platformMeta(name);
   const maxBody = meta?.constraints?.max_body_len ?? null;
@@ -183,7 +186,7 @@ function renderActivePreview() {
 
   let styleHtml = "";
   if (info && info.unavailable) {
-    styleHtml = `<div class="warnings">✨ ${escapeHtml(info.note || "风格适配不可用")}</div>`;
+    styleHtml = `<div class="info">✨ ${escapeHtml(info.note || "风格适配不可用")}</div>`;
   } else if (info && info.status === "pending") {
     styleHtml = `<div class="style-panel">✨ <b>LLM 风格化结果（待你决定）</b> —— ${info.changed ? "已按平台调性改写，下方为预览" : "改写结果与原文基本一致"}。请审阅后点 <b>采用</b> 或 <b>舍弃</b>。
       <details open><summary>查看改写后的 Markdown</summary><pre class="text-preview" style="background:#fff;border:1px solid var(--line);border-radius:var(--r-sm);">${escapeHtml(info.styled_md || "")}</pre></details></div>`;
@@ -392,6 +395,38 @@ const escapeAttr = escapeHtml; // 属性值同样需要转义引号
 
 editor.addEventListener("input", debounce(refresh, 400));
 $("publishBtn").addEventListener("click", publish);
+
+// 拖拽中间分隔条调整左右宽度；右栏 flex:1 始终吃掉剩余 → 两栏永远铺满
+(function initSplit() {
+  const main = document.querySelector("main");
+  const left = document.querySelector(".pane.left");
+  const gutter = $("gutter");
+  if (!main || !left || !gutter) return;
+  const PAD = 16, GUT = 12, MIN = 22, MAX = 78; // 左右最小/最大占比(%)
+  let dragging = false;
+  gutter.addEventListener("mousedown", (e) => {
+    dragging = true;
+    gutter.classList.add("dragging");
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const rect = main.getBoundingClientRect();
+    const usable = rect.width - PAD * 2 - GUT;
+    const pct = Math.max(MIN, Math.min(MAX, ((e.clientX - rect.left - PAD) / usable) * 100));
+    left.style.flexBasis = pct + "%";
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    gutter.classList.remove("dragging");
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+  });
+  gutter.addEventListener("dblclick", () => { left.style.flexBasis = "50%"; }); // 复位 50/50
+})();
 
 // 粘贴剪贴板图片：上传 → 在光标处插入 markdown 图片语法 → 预览自动显示
 editor.addEventListener("paste", async (e) => {

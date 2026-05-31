@@ -10,20 +10,24 @@
     --brand: #5b5bd6; --brand-600: #4f47cc; --brand-50: #eef0fb;
     --wechat: #07c160; --xiaohongshu: #ff2442; --zhihu: #0084ff; --bilibili: #fb7299;
     --ink: #1f2329; --ink-2: #5a6472; --ink-3: #97a0b0;
-    --line: #eaecf0; --line-2: #f4f6f8;
-    --bg-soft: #f6f7f9;
+    /* 拉开背景层级：画布压暗、卡片纯白、页头浅灰；边界加重让块分清 */
+    --canvas: #e4e7ec; --surface: #ffffff; --tabbar-bg: #eef0f3;
+    --line: #d0d5dd; --line-2: #e7eaef;
+    --bg-soft: #eef0f3;
     --ok: #1a7a43; --ok-bg: #eaf7ef; --ok-border: #c2e7cf;
     --warn: #8a5a00; --warn-bg: #fff8e6; --warn-border: #ffe2a8;
+    --info: #2c5282; --info-bg: #eef4fb; --info-border: #cfe0f3;
     --style: #9e1068; --style-bg: #fff0f6; --style-border: #ffc7e0;
     --r-sm: 6px; --r: 8px; --r-lg: 12px; --r-pill: 999px;
-    --sh-sm: 0 1px 2px rgba(16,24,40,.05);
-    --sh: 0 6px 20px rgba(16,24,40,.08);
+    --sh-sm: 0 1px 3px rgba(16,24,40,.08);
+    --sh: 0 4px 12px rgba(16,24,40,.10);
+    --gap: 12px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); background: #fff; height: 100vh; display: flex; flex-direction: column; -webkit-font-smoothing: antialiased; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); background: var(--canvas); height: 100vh; display: flex; flex-direction: column; -webkit-font-smoothing: antialiased; }
 
   /* ---- header ---- */
-  header { display: flex; align-items: center; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: #fff; }
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--surface); box-shadow: var(--sh-sm); position: relative; z-index: 3; }
   header h1 { display: flex; align-items: center; gap: 9px; font-size: 18px; margin: 0; color: var(--ink); white-space: nowrap; font-weight: 700; letter-spacing: -.2px; }
   header h1::before { content: ""; width: 22px; height: 22px; border-radius: 7px; background: linear-gradient(135deg, var(--brand), #8b7cf0); box-shadow: var(--sh-sm); }
   header .sub { font-size: 12px; color: var(--ink-3); }
@@ -45,36 +49,58 @@
   button:disabled { opacity: .5; cursor: default; }
   #status { font-size: 12px; color: var(--ink-3); min-width: 80px; }
 
-  /* ---- layout ---- */
-  main { flex: 1; display: flex; min-height: 0; }
-  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .pane.left { border-right: 1px solid var(--line); background: var(--bg-soft); }
-  .pane h2 { font-size: 11px; letter-spacing: .4px; text-transform: uppercase; color: var(--ink-3); margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--line-2); font-weight: 600; background: #fff; }
-  /* 编辑器做成白底卡片，与右侧预览卡片对称；浮在 pane 的浅灰底上 */
-  #editor { flex: 1; outline: none; resize: none; margin: 14px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--sh-sm); background: #fff; font-family: "SF Mono", Menlo, ui-monospace, monospace; font-size: 13px; line-height: 1.75; color: var(--ink); transition: border-color .15s ease, box-shadow .15s ease; }
-  #editor:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-50); }
+  /* ---- layout（左右可拖拽，始终铺满） ---- */
+  main { flex: 1; display: flex; min-height: 0; padding: var(--gap) 16px 16px; background: var(--canvas); }
+  .pane { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .pane.left  { flex: 0 0 50%; }   /* 初始 50%，拖拽改 flex-basis */
+  .pane.right { flex: 1 1 0; }     /* 永远吃掉剩余 → 自动铺满 */
 
-  /* ---- preview tabs ---- */
-  .tabs { display: flex; gap: 6px; padding: 10px 14px 0; flex-wrap: wrap; }
-  .tab { display: inline-flex; align-items: center; font-size: 13px; padding: 7px 14px; border: 1px solid var(--line); border-radius: var(--r-sm) var(--r-sm) 0 0; background: var(--bg-soft); cursor: pointer; color: var(--ink-2); transition: color .15s, border-color .15s; }
-  .tab:hover { color: var(--ink); }
+  /* 可拖拽分隔条：替代固定间距，本身即 12px 的"沟" */
+  .gutter { flex: 0 0 var(--gap); align-self: stretch; cursor: col-resize; position: relative; }
+  .gutter::before { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 4px; height: 44px; border-radius: 3px; background: var(--line); transition: background .15s, height .15s; }
+  .gutter:hover::before, .gutter.dragging::before { background: var(--brand); height: 64px; }
+
+  /* 左右共用卡壳：顶部页头 + 内容，完全对称 */
+  .editor-card, .preview-card { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--sh); overflow: hidden; transition: border-color .2s ease, box-shadow .2s ease; }
+  /* 左：编辑器固定蓝色(品牌色)描边 + 同色柔光 */
+  .editor-card { border-color: var(--brand); box-shadow: var(--sh), 0 0 0 3px var(--brand-50); }
+  /* 右：预览描边跟随当前平台主题色（JS 给 #previewCard 加平台 class） */
+  .preview-card.wechat      { border-color: var(--wechat);      box-shadow: var(--sh), 0 0 0 3px color-mix(in srgb, var(--wechat) 14%, #fff); }
+  .preview-card.xiaohongshu { border-color: var(--xiaohongshu); box-shadow: var(--sh), 0 0 0 3px color-mix(in srgb, var(--xiaohongshu) 14%, #fff); }
+  .preview-card.zhihu       { border-color: var(--zhihu);       box-shadow: var(--sh), 0 0 0 3px color-mix(in srgb, var(--zhihu) 14%, #fff); }
+  .preview-card.bilibili    { border-color: var(--bilibili);    box-shadow: var(--sh), 0 0 0 3px color-mix(in srgb, var(--bilibili) 14%, #fff); }
+
+  /* 卡片页头：左侧标签条 / 右侧 tab 栏，等高(44px)对齐 */
+  .card-head { display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 16px; background: var(--tabbar-bg); border-bottom: 1px solid var(--line); font-size: 11px; letter-spacing: .4px; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .card-head::before { content: ""; width: 3px; height: 12px; border-radius: 2px; background: var(--brand); }
+
+  /* 编辑器输入区：嵌在卡里，去掉自身边框/圆角/阴影 */
+  #editor { flex: 1; outline: none; resize: none; padding: 18px; border: none; border-radius: 0; background: var(--surface); font-family: "SF Mono", Menlo, ui-monospace, monospace; font-size: 13px; line-height: 1.8; color: var(--ink); }
+
+  /* ---- preview tabs（文件夹页签，预览卡的页头） ---- */
+  .tabs { display: flex; align-items: flex-end; gap: 4px; min-height: 44px; padding: 7px 10px 0; background: var(--tabbar-bg); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tab { position: relative; display: inline-flex; align-items: center; font-size: 13px; padding: 9px 16px; border: 1px solid transparent; border-bottom: none; border-radius: var(--r) var(--r) 0 0; background: transparent; cursor: pointer; color: var(--ink-2); transition: color .15s, background .15s; }
+  .tab:hover { color: var(--ink); background: rgba(255,255,255,.5); }
   .tab[data-name="wechat"]      { --pc: var(--wechat); }
   .tab[data-name="xiaohongshu"] { --pc: var(--xiaohongshu); }
   .tab[data-name="zhihu"]       { --pc: var(--zhihu); }
   .tab[data-name="bilibili"]    { --pc: var(--bilibili); }
-  .tab.active { background: #fff; color: var(--pc, var(--brand)); font-weight: 600; border-color: var(--line); border-bottom: 2px solid var(--pc, var(--brand)); margin-bottom: -1px; }
+  /* 选中页签：白底 + 顶部平台色条 + 向下连通（盖住页头底线） */
+  .tab.active { background: var(--surface); color: var(--pc, var(--brand)); font-weight: 600; border-color: var(--line); border-top: 2px solid var(--pc, var(--brand)); padding-top: 8px; }
+  .tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--surface); }
   .tab .badge { display: inline-block; min-width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; }
   .tab .badge.warn { background: #faad14; }
 
   /* ---- preview body ---- */
-  .preview-wrap { flex: 1; overflow: auto; padding: 18px; background: var(--bg-soft); }
+  .preview-wrap { flex: 1; overflow: auto; padding: 18px; background: var(--surface); }
   .meta { font-size: 12px; color: var(--ink-2); margin-bottom: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .meta > span { background: #fff; border: 1px solid var(--line); border-radius: var(--r-pill); padding: 4px 11px; line-height: 1.4; }
+  .meta > span { background: var(--canvas); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 4px 11px; line-height: 1.4; }
   .meta .count.over { color: #fff; background: var(--xiaohongshu); border-color: var(--xiaohongshu); font-weight: 600; }
 
   /* ---- info strips (receipt / warnings / style) share one system ---- */
-  .receipt, .warnings, .style-panel { font-size: 12px; line-height: 1.6; padding: 10px 14px; border-radius: var(--r); border: 1px solid; margin-bottom: 12px; }
+  .receipt, .warnings, .style-panel, .info { font-size: 12px; line-height: 1.6; padding: 10px 14px; border-radius: var(--r); border: 1px solid; margin-bottom: 12px; }
   .receipt.ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+  .info { background: var(--info-bg); border-color: var(--info-border); color: var(--info); }
   .warnings { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn); }
   .warnings ul { margin: 4px 0 0; padding-left: 18px; }
   .style-panel { background: var(--style-bg); border-color: var(--style-border); color: var(--style); }
@@ -107,9 +133,9 @@
   button.mini { font-size: 11px; padding: 3px 9px; }
 
   /* ---- LLM 设置栏 ---- */
-  #llm-bar { display: flex; align-items: center; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--line); background: var(--style-bg); flex-wrap: wrap; }
+  #llm-bar { display: flex; align-items: center; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--line); background: var(--surface); flex-wrap: wrap; position: relative; z-index: 2; }
   #llm-bar .llm-label { font-size: 12px; font-weight: 600; color: var(--style); white-space: nowrap; }
-  #llm-bar select, #llm-bar input { font-size: 12px; padding: 6px 9px; border: 1px solid var(--style-border); border-radius: var(--r-sm); background: #fff; color: var(--ink); }
+  #llm-bar select, #llm-bar input { font-size: 12px; padding: 6px 9px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #fff; color: var(--ink); }
   #llm-bar #llm-key { flex: 1; min-width: 200px; }
   #llm-bar #llm-model { width: 170px; }
   #llm-bar .llm-hint { font-size: 11px; color: var(--ink-3); }
@@ -135,13 +161,17 @@
 
 <main>
   <section class="pane left">
-    <h2>Markdown 编辑器</h2>
-    <textarea id="editor" spellcheck="false"></textarea>
+    <div class="editor-card">
+      <div class="card-head">Markdown 编辑器</div>
+      <textarea id="editor" spellcheck="false"></textarea>
+    </div>
   </section>
+  <div class="gutter" id="gutter" title="拖动调整左右宽度（双击复位 50/50）"></div>
   <section class="pane right">
-    <h2>多平台实时预览</h2>
-    <div class="tabs" id="tabs"></div>
-    <div class="preview-wrap" id="preview"></div>
+    <div class="preview-card" id="previewCard">
+      <div class="tabs" id="tabs"></div>
+      <div class="preview-wrap" id="preview"></div>
+    </div>
   </section>
 </main>
 
