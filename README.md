@@ -1,5 +1,5 @@
 # MultiPub —— 多平台内容发布工具
-
+DOM视频链接：https://www.bilibili.com/video/BV12eVU6nEqP/?vd_source=89c4b5f63bc49edbb0e747603e076480
 > 一次写作，多平台适配，一键（模拟）发布。
 
 创作者用 Markdown 写一次内容，**Web 工具**自动适配 **公众号 / 知乎 / B站专栏 / 小红书** 等平台的格式与风格，左边写、右边实时预览各平台成品，一键模拟发布。
