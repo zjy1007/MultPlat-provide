@@ -3,6 +3,7 @@
 > 一次写作，自动适配 **公众号 / 知乎 / B站专栏 / 小红书** 的格式与风格，左写右预览，一键（模拟）发布。
 
 🎬 **演示视频**：https://www.bilibili.com/video/BV12eVU6nEqP/?vd_source=89c4b5f63bc49edbb0e747603e076480
+<img width="1470" height="832" alt="image" src="https://github.com/user-attachments/assets/38487693-d702-49c0-a6f2-5439b08aa9de" />
 
 ---
 
